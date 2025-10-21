@@ -1,0 +1,12 @@
+{
+  "name": "fantasmia-ai",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "openai": "^4.28.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "typescript": "^5.6.3"
+  }
+}

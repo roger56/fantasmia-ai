@@ -1,35 +1,44 @@
-// Vercel Edge Function oppure Node runtime
-export const config = { runtime: 'nodejs' }; // forza runtime Node (così puoi usare process.env)
+import OpenAI from "openai";
+
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+type Body = { text?: string };
 
 export default async function handler(req: any, res: any) {
-  // ...
-}
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    const { text, tone } = req.body || {};
-    if (!text) return res.status(400).json({ error: 'Missing text' });
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Method not allowed" });
+      return;
+    }
 
-    const prompt = `Migliora il seguente testo per bambini (6-11 anni). Tono: ${tone || 'gentile e chiaro'}.
-Restituisci SOLO il testo migliorato, niente meta-spiegazioni.
-Testo:
-${text}`;
+    const body: Body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
+    const text = body.text || "";
 
-    const r = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        input: prompt
-      })
+    if (!text) {
+      res.status(400).json({ error: "Missing 'text' in body" });
+      return;
+    }
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "Write a rhymed poem in Italian inspired by the user's story, at most 15 lines. Output only the poem.",
+        },
+        { role: "user", content: text },
+      ],
+      temperature: 0.8,
     });
-    const data = await r.json();
-    const improved = data?.output_text?.trim() || '';
-    return res.status(200).json({ content: improved });
-  } catch (e:any) {
-    return res.status(500).json({ error: e?.message || 'AI error' });
+
+    const output =
+      completion.choices?.[0]?.message?.content?.toString().trim() ?? "";
+
+    res.status(200).json({ output_text: output });
+  } catch (err: any) {
+    console.error("poetry error:", err);
+    res.status(500).json({ error: "Poetry failed", detail: String(err?.message || err) });
   }
 }
+

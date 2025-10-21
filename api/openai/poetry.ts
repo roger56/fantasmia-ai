@@ -1,6 +1,11 @@
 import OpenAI from "openai";
-// subito sotto gli import
-const CORS_HEADERS = {
+
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+type Body = { text?: string };
+
+export default async function handler(req: any, res: any) {
+ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
@@ -16,11 +21,6 @@ res.setHeader("Access-Control-Allow-Origin", "*");
 res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
 res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-type Body = { text?: string };
-
-export default async function handler(req: any, res: any) {
   try {
     if (req.method !== "POST") {
       res.status(405).json({ error: "Method not allowed" });

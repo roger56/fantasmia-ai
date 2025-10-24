@@ -64,7 +64,7 @@ export async function POST(req: Request) {
           content: "Sei un traduttore professionista. Traduci accuratamente il testo dalla lingua sorgente alla lingua target. Rispondi SOLO con il testo tradotto, senza commenti aggiuntivi."
         },
         {
-          role: "user", 
+          role: "user",
           content: `Traduci questo testo da ${sourceLanguage} a ${targetLanguage}: "${text}"`
         },
       ],
@@ -79,7 +79,7 @@ export async function POST(req: Request) {
       {
         status: 200,
         headers: {
-          "Content-Type": "application/json", 
+          "Content-Type": "application/json",
           ...corsHeaders,
         },
       }
@@ -87,9 +87,9 @@ export async function POST(req: Request) {
   } catch (err: any) {
     console.error("translate error:", err);
     return new Response(
-      JSON.stringify({ 
-        error: "Translation failed", 
-        detail: String(err?.message || err) 
+      JSON.stringify({
+        error: "Translation failed",
+        detail: String(err?.message || err)
       }),
       {
         status: 500,

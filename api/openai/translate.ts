@@ -38,7 +38,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const body: Body = await req.json();
+    // CORREZIONE: Aggiungi "as Body" qui
+    const body = await req.json() as Body;
     const text = body.text || "";
     const targetLanguage = body.target_language || "en";
     const sourceLanguage = body.source_language || "auto";

@@ -1,66 +1,77 @@
 import { Resend } from 'resend';
 
+// Inizializza Resend
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-type EmailRequest = {
-  to: string;
-  subject: string;
-  html: string;
-  text?: string;
-};
-
 export async function POST(request: Request) {
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers: corsHeaders });
-  }
-
+  console.log('Email endpoint called');
+  
   try {
-    const body = await request.json() as EmailRequest;
-    const { to, subject, html, text } = body;
+    const body = await request.json();
+    console.log('Request body:', body);
 
+    const { to, subject, html } = body;
+
+    // Validazione base
     if (!to || !subject || !html) {
-      return new Response(
-        JSON.stringify({ error: 'Missing required fields' }),
-        { status: 400, headers: corsHeaders }
+      return Response.json(
+        { error: 'Missing required fields: to, subject, html' },
+        { status: 400 }
       );
     }
 
-    // INVIO EMAIL CON RESEND
+    // Verifica API key
+    if (!process.env.RESEND_API_KEY) {
+      console.error('RESEND_API_KEY not set');
+      return Response.json(
+        { error: 'Email service not configured' },
+        { status: 500 }
+      );
+    }
+
+    console.log('Sending email to:', to);
+
+    // Invio email
     const { data, error } = await resend.emails.send({
-      from: 'Fantasmia AI <onboarding@resend.dev>', // Puoi verificare il tuo dominio dopo
-      to: [to],
+      from: 'Fantasmia AI <onboarding@resend.dev>',
+      to: to,
       subject: subject,
       html: html,
-      text: text || html.replace(/<[^>]*>/g, ''),
     });
 
     if (error) {
-      throw new Error(error.message);
+      console.error('Resend error:', error);
+      return Response.json(
+        { error: error.message },
+        { status: 500 }
+      );
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        message: 'Email sent successfully',
-        id: data?.id,
-      }),
-      { status: 200, headers: corsHeaders }
-    );
+    console.log('Email sent successfully:', data?.id);
+    
+    return Response.json({
+      success: true,
+      message: 'Email sent successfully',
+      id: data?.id
+    });
 
   } catch (error: any) {
-    console.error('Email error:', error);
-    return new Response(
-      JSON.stringify({
-        error: 'Failed to send email',
-        detail: error.message,
-      }),
-      { status: 500, headers: corsHeaders }
+    console.error('Unexpected error:', error);
+    return Response.json(
+      { error: 'Internal server error: ' + error.message },
+      { status: 500 }
     );
   }
+}
+
+// Handle OPTIONS for CORS
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
+  });
 }

@@ -50,7 +50,9 @@ export async function POST(req: Request) {
       );
     }
 
-    const body: Body = await req.json();
+    // === CORREZIONE 1: Aggiungi "as Body" qui ===
+    const body = await req.json() as Body;
+    
     let prompt = body.prompt || "";
     const style = body.style || "fotografico";
 
@@ -122,7 +124,8 @@ export async function POST(req: Request) {
       style: "vivid",
     });
 
-    const imageUrl = response.data[0]?.url;
+    // === CORREZIONE 2: Aggiungi "?" per controllo optional ===
+    const imageUrl = response.data?.[0]?.url;
 
     if (!imageUrl) {
       throw new Error("No image URL returned from OpenAI");

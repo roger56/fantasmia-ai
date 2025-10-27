@@ -37,7 +37,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const body: Body = await req.json();
+    // CORREZIONE: Aggiungi "as Body" qui
+    const body = await req.json() as Body;
     const theme = body.theme || "amore";
     const poetryStyle = body.style || "libera";
 

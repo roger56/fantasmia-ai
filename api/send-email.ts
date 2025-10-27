@@ -39,9 +39,9 @@ export async function POST(request: Request) {
       </div>
     `;
 
-    // OPZIONE 5: Fantasmia AI <ai@fantasmia-ai.com>
+    // OPZIONE 5: Fantasmia AI <ai@fantasmia.it>
     const { data, error } = await resend.emails.send({
-      from: 'Fantasmia AI <ai@fantasmia-ai.com>',
+      from: 'Fantasmia AI <ai@fantasmia.it>',
       to: to,
       subject: subject,
       html: emailContent,

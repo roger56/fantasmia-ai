@@ -1,42 +1,51 @@
 import { Resend } from 'resend';
 
-// Inizializza Resend
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+type EmailRequest = {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+};
+
 export async function POST(request: Request) {
-  console.log('Email endpoint called');
-  
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 200, headers: corsHeaders });
+  }
+
   try {
-    const body = await request.json();
-    console.log('Request body:', body);
+    const body = await request.json() as EmailRequest;
+    const { to, subject, html, text } = body;
 
-    const { to, subject, html } = body;
-
-    // Validazione base
     if (!to || !subject || !html) {
       return Response.json(
-        { error: 'Missing required fields: to, subject, html' },
+        { error: 'Missing required fields' },
         { status: 400 }
       );
     }
 
-    // Verifica API key
-    if (!process.env.RESEND_API_KEY) {
-      console.error('RESEND_API_KEY not set');
-      return Response.json(
-        { error: 'Email service not configured' },
-        { status: 500 }
-      );
-    }
+    // AGGIUNGI IL FOOTER AL CONTENUTO HTML
+    const emailContent = `
+      ${html}
+      <div style="color: #666; font-size: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+        <p>🤖 <em>Creato con Intelligenza Artificiale - Non rispondere a questa email</em></p>
+      </div>
+    `;
 
-    console.log('Sending email to:', to);
-
-    // Invio email
+    // OPZIONE 5: Fantasmia AI <ai@fantasmia-ai.com>
     const { data, error } = await resend.emails.send({
-      from: 'Fantasmia AI <onboarding@resend.dev>',
+      from: 'Fantasmia AI <ai@fantasmia-ai.com>',
       to: to,
       subject: subject,
-      html: html,
+      html: emailContent,
+      text: text || html.replace(/<[^>]*>/g, ''),
     });
 
     if (error) {
@@ -47,8 +56,6 @@ export async function POST(request: Request) {
       );
     }
 
-    console.log('Email sent successfully:', data?.id);
-    
     return Response.json({
       success: true,
       message: 'Email sent successfully',
@@ -64,7 +71,6 @@ export async function POST(request: Request) {
   }
 }
 
-// Handle OPTIONS for CORS
 export async function OPTIONS() {
   return new Response(null, {
     status: 200,

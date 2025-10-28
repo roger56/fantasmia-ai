@@ -70,9 +70,9 @@ export async function POST(request: Request) {
     console.log('Sending email to:', to);
 
     // Invio email
-    
+    const transporter = createTransport();
     const result = await transporter.sendMail(mailOptions);
-  const transporter = createTransport();
+  
     console.log('Email sent successfully:', result.messageId);
 
     return Response.json({

@@ -1,4 +1,122 @@
 import OpenAI from "openai";
+import OpenAI from "openai";
+import Cors from 'cors';  // ← AGGIUNGI QUESTA IMPORT
+import { NextApiRequest, NextApiResponse } from 'next';
+
+// ← INSERISCI QUI IL CODICE CORS (dopo le import ma prima della logica esistente)
+
+// Inizializza il middleware CORS
+const cors = Cors({
+  origin: [
+    'https://6lf56c03-2655-460b-9514-3ce77cd7cd0.lovableproject.com',
+    'https://*.lovableproject.com'
+  ],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+});
+
+// Helper per eseguire il middleware
+function runMiddleware(req: NextApiRequest, res: NextApiResponse, fn: any) {
+  return new Promise((resolve, reject) => {
+    fn(req, res, (result: any) => {
+      if (result instanceof Error) {
+        return reject(result);
+      }
+      return resolve(result);
+    });
+  });
+}
+
+// ← MANTIENI TUTTO IL CODICE ESISTENTE DA QUI IN POI ↓
+
+const client = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,  // Correggi: apiKey non apikey
+});
+
+type Body = {
+    prompt1: string;
+    style1: string;
+};
+
+// Mappatura degli stili con prompt ottimizzati
+const STYLES = {
+    fumetto: "fumetto colorato, vivace, linee nette, cartoon",
+    manga: "manga giapponese, bianco e nero, tratti distintivi, drammatico",
+    // ... il resto del tuo codice esistente
+};
+
+// MODIFICA LA FUNZIONE handler PRINCIPALE:
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // ← AGGIUNGI QUESTA LINEA ALL'INIZIO DELLA HANDLER
+  await runMiddleware(req, res, cors);
+  
+  // ← MANTIENI TUTTA LA TUA LOGICA ESISTENTE QUI SOTTO
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  const { prompt1, style1 } = req.body as Body;
+  
+  // ... il resto del tuo codice per generare immagini
+  try {
+    // La tua logica esistente con OpenAI...
+    const response = await client.images.generate({
+      model: "dall-e-3",
+      prompt: `${prompt1} in stile ${STYLES[style1 as keyof typeof STYLES]}`,
+      size: "1024x1024",
+      quality: "standard",
+      n: 1,
+    });
+
+    const imageUrl = response.data[0]?.url;
+    
+    if (!imageUrl) {
+      throw new Error("No image URL returned from OpenAI");
+    }
+
+    res.status(200).json({ imageUrl });
+    
+  } catch (error) {
+    console.error("Error generating image:", error);
+    res.status(500).json({ error: "Failed to generate image" });
+  }
+}
+Riepilogo delle modifiche:
+import Cors from 'cors'; - dopo l'import di OpenAI
+
+Blocco CORS completo - dopo le import ma prima di const client = new OpenAI()
+
+await runMiddleware(req, res, cors); - prima riga dentro la funzione handler
+
+Verifica che cors sia installato correttamente:
+bash
+# Nella cartella del progetto Vercel
+npm list cors
+Dovresti vedere cors nella lista delle dipendenze.
+
+File finale completo dovrebbe essere strutturato così:
+typescript
+// 1. IMPORTS
+import OpenAI from "openai";
+import Cors from 'cors';
+import { NextApiRequest, NextApiResponse } from 'next';
+
+// 2. CONFIGURAZIONE CORS
+const cors = Cors({ ... });
+function runMiddleware(...) { ... }
+
+// 3. IL TUO CODICE ESISTENTE
+const client = new OpenAI({ ... });
+type Body = { ... };
+const STYLES = { ... };
+
+// 4. HANDLER MODIFICATA
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  await runMiddleware(req, res, cors);  // ← PRIMA RIGA!
+  
+  // ... tutto il resto del tuo codice
+}
+Fai il deploy su Vercel dopo queste modifiche e il problema CORS dovrebbe risolversi!
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,

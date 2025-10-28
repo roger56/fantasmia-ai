@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import OpenAI from "openai";
 import Cors from 'cors';  // ← AGGIUNGI QUESTA IMPORT
 import { NextApiRequest, NextApiResponse } from 'next';
 

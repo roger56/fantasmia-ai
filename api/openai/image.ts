@@ -2,16 +2,20 @@ import OpenAI from "openai";
 import Cors from 'cors';
 import { NextApiRequest, NextApiResponse } from 'next';
 
-// Inizializza il middleware CORS
+// CONFIGURAZIONE CORS COMPLETA E SICURA
 const cors = Cors({
   origin: [
-    'https://id-preview--61f56c03-2d55-460b-9514-3ce772cd7cd0.lovable.app',
-    'https://6lf56c03-2655-460b-9514-3ce77cd7cd0.lovableproject.com',
-    'https://*.lovable.app',
-    'https://*.lovableproject.com'
+    'https://61f56c03-2d55-460b-9514-3ce772cd7cd0.lovableproject.com', // ← PRINCIPALE
+    'https://id-preview--61f56c03-2d55-460b-9514-3ce772cd7cd0.lovable.app', // ← PREVIEW
+    'https://6lf56c03-2655-460b-9514-3ce77cd7cd0.lovableproject.com', // ← BACKUP
+    'https://*.lovable.app', // ← TUTTI I SOTTODOMINI
+    'https://*.lovableproject.com' // ← TUTTI I SOTTODOMINI
   ],
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 });
 
 // Helper per eseguire il middleware
@@ -49,7 +53,7 @@ const STYLES = {
 const ANTI_TEXT_PROMPT = "Nessun testo, nessuna scritta, nessuna parola, carattere o simbolo alfabetico";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // Esegui il middleware CORS
+  // Esegui il middleware CORS PER PRIMO
   await runMiddleware(req, res, cors);
 
   if (req.method === "OPTIONS") {
@@ -104,7 +108,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     console.log(`Generating image - Style: ${style}, Prompt length: ${prompt.length}, Final length: ${finalPrompt.length}`);
 
-    // 4. GENERAZIONE IMMAGINE - FORMATO BASE64 OBBLIGATORIO
+    // 4. GENERAZIONE IMMAGINE - FORMATO BASE64
     const response = await client.images.generate({
       model: "dall-e-3",
       prompt: finalPrompt,
@@ -112,22 +116,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       size: "1024x1024",
       quality: "standard",
       style: "vivid",
-      response_format: "b64_json" // ← QUESTA È LA CHIAVE!
+      response_format: "b64_json"
     });
 
     // Controllo per i dati base64
     const imageBase64 = response.data?.[0]?.b64_json;
 
     if (!imageBase64) {
-      console.error("❌ OpenAI non ha restituito dati base64");
       throw new Error("No base64 image data returned from OpenAI");
     }
 
-    console.log(`✅ Immagine base64 generata: ${imageBase64.length} caratteri`);
+    console.log("✅ Image generated successfully in base64 format");
 
-    // 5. RESTITUISCI SOLO BASE64 - RIMUOVI IMAGE_URL
     return res.status(200).json({
-      image_base64: imageBase64, // ← PROPRIETÀ CORRETTA
+      image_base64: imageBase64,
       style: style,
       prompt: prompt,
       prompt_length: prompt.length,

@@ -1,12 +1,23 @@
-import { Resend } from 'resend';
-
-const resend = new Resend(process.env.RESEND_API_KEY);
+import nodemailer from 'nodemailer';
 
 type EmailRequest = {
   to: string;
   subject: string;
   html: string;
   text?: string;
+};
+
+// Configurazione transporter per Aruba
+const createTransporter = () => {
+  return nodemailer.createTransporter({
+    host: process.env.SMTP_HOST || 'smtps.aruba.it',
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: process.env.SMTP_SECURE === 'true',
+    auth: {
+      user: process.env.SMTP_USER || 'ai@pirotta.it',
+      pass: process.env.SMTP_PASS,
+    },
+  });
 };
 
 export async function POST(request: Request) {
@@ -26,12 +37,20 @@ export async function POST(request: Request) {
 
     if (!to || !subject || !html) {
       return Response.json(
-        { error: 'Missing required fields' },
-        { status: 400 }
+        { error: 'Missing required fields: to, subject, html' },
+        { status: 400, headers: corsHeaders }
       );
     }
 
-    // AGGIUNGI IL FOOTER AL CONTENUTO HTML
+    // Verifica configurazione SMTP
+    if (!process.env.SMTP_PASS) {
+      return Response.json(
+        { error: 'SMTP not configured on server' },
+        { status: 500, headers: corsHeaders }
+      );
+    }
+
+    // Aggiungi footer no-reply
     const emailContent = `
       ${html}
       <div style="color: #666; font-size: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
@@ -39,34 +58,45 @@ export async function POST(request: Request) {
       </div>
     `;
 
-    // OPZIONE 5: Fantasmia AI <ai@fantasmia.it>
-    const { data, error } = await resend.emails.send({
-      from: 'Fantasmia AI <ai@fantasmia.it>',
+    // Configura email
+    const mailOptions = {
+      from: 'Fantasmia AI <ai@pirotta.it>',
       to: to,
       subject: subject,
       html: emailContent,
       text: text || html.replace(/<[^>]*>/g, ''),
-    });
+    };
 
-    if (error) {
-      console.error('Resend error:', error);
-      return Response.json(
-        { error: error.message },
-        { status: 500 }
-      );
-    }
+    console.log('Sending email to:', to);
+
+    // Invio email
+    const transporter = createTransporter();
+    const result = await transporter.sendMail(mailOptions);
+
+    console.log('Email sent successfully:', result.messageId);
 
     return Response.json({
       success: true,
       message: 'Email sent successfully',
-      id: data?.id
-    });
+      messageId: result.messageId,
+    }, { headers: corsHeaders });
 
   } catch (error: any) {
-    console.error('Unexpected error:', error);
+    console.error('Email error:', error);
+    
+    let errorMessage = 'Failed to send email';
+    if (error.code === 'EAUTH') {
+      errorMessage = 'SMTP authentication failed';
+    } else if (error.code === 'ENOTFOUND') {
+      errorMessage = 'SMTP server not found';
+    }
+
     return Response.json(
-      { error: 'Internal server error: ' + error.message },
-      { status: 500 }
+      {
+        error: errorMessage,
+        detail: error.message,
+      },
+      { status: 500, headers: corsHeaders }
     );
   }
 }

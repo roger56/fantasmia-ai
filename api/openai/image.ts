@@ -1,8 +1,6 @@
 import OpenAI from "openai";
-import Cors from 'cors';  // ← AGGIUNGI QUESTA IMPORT
+import Cors from 'cors';
 import { NextApiRequest, NextApiResponse } from 'next';
-
-// ← INSERISCI QUI IL CODICE CORS (dopo le import ma prima della logica esistente)
 
 // Inizializza il middleware CORS
 const cors = Cors({
@@ -26,97 +24,6 @@ function runMiddleware(req: NextApiRequest, res: NextApiResponse, fn: any) {
   });
 }
 
-// ← MANTIENI TUTTO IL CODICE ESISTENTE DA QUI IN POI ↓
-
-const client = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,  // Correggi: apiKey non apikey
-});
-
-type Body = {
-    prompt1: string;
-    style1: string;
-};
-
-// Mappatura degli stili con prompt ottimizzati
-const STYLES = {
-    fumetto: "fumetto colorato, vivace, linee nette, cartoon",
-    manga: "manga giapponese, bianco e nero, tratti distintivi, drammatico",
-    // ... il resto del tuo codice esistente
-};
-
-// MODIFICA LA FUNZIONE handler PRINCIPALE:
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // ← AGGIUNGI QUESTA LINEA ALL'INIZIO DELLA HANDLER
-  await runMiddleware(req, res, cors);
-  
-  // ← MANTIENI TUTTA LA TUA LOGICA ESISTENTE QUI SOTTO
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
-  const { prompt1, style1 } = req.body as Body;
-  
-  // ... il resto del tuo codice per generare immagini
-  try {
-    // La tua logica esistente con OpenAI...
-    const response = await client.images.generate({
-      model: "dall-e-3",
-      prompt: `${prompt1} in stile ${STYLES[style1 as keyof typeof STYLES]}`,
-      size: "1024x1024",
-      quality: "standard",
-      n: 1,
-    });
-
-    const imageUrl = response.data[0]?.url;
-    
-    if (!imageUrl) {
-      throw new Error("No image URL returned from OpenAI");
-    }
-
-    res.status(200).json({ imageUrl });
-    
-  } catch (error) {
-    console.error("Error generating image:", error);
-    res.status(500).json({ error: "Failed to generate image" });
-  }
-}
-Riepilogo delle modifiche:
-import Cors from 'cors'; - dopo l'import di OpenAI
-
-Blocco CORS completo - dopo le import ma prima di const client = new OpenAI()
-
-await runMiddleware(req, res, cors); - prima riga dentro la funzione handler
-
-Verifica che cors sia installato correttamente:
-bash
-# Nella cartella del progetto Vercel
-npm list cors
-Dovresti vedere cors nella lista delle dipendenze.
-
-File finale completo dovrebbe essere strutturato così:
-typescript
-// 1. IMPORTS
-import OpenAI from "openai";
-import Cors from 'cors';
-import { NextApiRequest, NextApiResponse } from 'next';
-
-// 2. CONFIGURAZIONE CORS
-const cors = Cors({ ... });
-function runMiddleware(...) { ... }
-
-// 3. IL TUO CODICE ESISTENTE
-const client = new OpenAI({ ... });
-type Body = { ... };
-const STYLES = { ... };
-
-// 4. HANDLER MODIFICATA
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  await runMiddleware(req, res, cors);  // ← PRIMA RIGA!
-  
-  // ... tutto il resto del tuo codice
-}
-//Fai il deploy su Vercel dopo queste modifiche e il problema CORS dovrebbe risolversi!
-
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -129,7 +36,7 @@ type Body = {
 // Mappatura degli stili con prompt ottimizzati
 const STYLES = {
   fumetto: "fumetto colorato, vivace, linee nette, cartoon",
-  manga: "manga giapponese, bianco e nero, tratti distintivi, drammatico", 
+  manga: "manga giapponese, bianco e nero, tratti distintivi, drammatico",
   acquarello: "acquerello, tratti morbidi, colori pastello, sfumature",
   fotografico: "fotorealistico, alta definizione, illuminazione naturale",
   carboncino: "carboncino, sfumature di grigio, tratti espressivi, artistico",
@@ -139,75 +46,41 @@ const STYLES = {
 // Prompt anti-testo ottimizzato
 const ANTI_TEXT_PROMPT = "Nessun testo, nessuna scritta, nessuna parola, carattere o simbolo alfabetico";
 
-export async function POST(req: Request) {
-  const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  };
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Esegui il middleware CORS
+  await runMiddleware(req, res, cors);
 
   if (req.method === "OPTIONS") {
-    return new Response(null, {
-      status: 200,
-      headers: corsHeaders,
-    });
+    return res.status(200).end();
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    if (req.method !== "POST") {
-      return new Response(
-        JSON.stringify({ error: "Method not allowed" }),
-        {
-          status: 405,
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-        }
-      );
-    }
-
-    // === CORREZIONE 1: Aggiungi "as Body" qui ===
-    const body = await req.json() as Body;
+    const body = req.body as Body;
     
     let prompt = body.prompt || "";
     const style = body.style || "fotografico";
 
     if (!prompt) {
-      return new Response(
-        JSON.stringify({ error: "Missing 'prompt' in body" }),
-        {
-          status: 400,
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-        }
-      );
+      return res.status(400).json({ error: "Missing 'prompt' in body" });
     }
 
     // Verifica che lo stile sia valido
     const validStyles = Object.keys(STYLES);
     if (!validStyles.includes(style)) {
-      return new Response(
-        JSON.stringify({ 
-          error: "Invalid style", 
-          valid_styles: validStyles 
-        }),
-        {
-          status: 400,
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-        }
-      );
+      return res.status(400).json({
+        error: "Invalid style",
+        valid_styles: validStyles
+      });
     }
 
     // 1. PULIZIA E RIDUZIONE DEL PROMPT
     prompt = prompt
       .replace(/scritta|testo|parola|scrivere|leggere|lettere|alfabeto|frase|didascalia|sottotitolo/gi, '')
-      .replace(/["'](.*?)["']/g, '') // Rimuove testo tra virgolette
+      .replace(/["][^"]*["]/g, '') // Rimuove testo tra virgolette
       .replace(/\s+/g, ' ') // Riduce spazi multipli
       .trim();
 
@@ -220,13 +93,13 @@ export async function POST(req: Request) {
 
     // 3. COSTRUZIONE PROMPT FINALE CON CONTROLLO LUNGHEZZA
     const styleDescription = STYLES[style as keyof typeof STYLES];
-    let finalPrompt = `${prompt}. ${styleDescription}. ${ANTI_TEXT_PROMPT}.`;
+    let finalPrompt = `${prompt}. ${styleDescription}. ${ANTI_TEXT_PROMPT}`;
 
     // Verifica lunghezza totale
     if (finalPrompt.length > 800) {
       console.warn(`Final prompt too long (${finalPrompt.length} chars), optimizing...`);
       // Riduci ulteriormente mantenendo l'essenziale
-      finalPrompt = `${prompt.substring(0, 400)}. ${styleDescription}. ${ANTI_TEXT_PROMPT}.`;
+      finalPrompt = `${prompt.substring(0, 400)}. ${styleDescription}. ${ANTI_TEXT_PROMPT}`;
     }
 
     console.log(`Generating image - Style: ${style}, Prompt length: ${prompt.length}, Final length: ${finalPrompt.length}`);
@@ -241,77 +114,41 @@ export async function POST(req: Request) {
       style: "vivid",
     });
 
-    // === CORREZIONE 2: Aggiungi "?" per controllo optional ===
+    // Controllo optional per l'URL dell'immagine
     const imageUrl = response.data?.[0]?.url;
 
     if (!imageUrl) {
       throw new Error("No image URL returned from OpenAI");
     }
 
-    return new Response(
-      JSON.stringify({ 
-        image_url: imageUrl,
-        style: style,
-        prompt: prompt,
-        prompt_length: prompt.length,
-        final_length: finalPrompt.length,
-        note: "Image generated with optimized prompt length"
-      }),
-      {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        },
-      }
-    );
+    return res.status(200).json({
+      image_url: imageUrl,
+      style: style,
+      prompt: prompt,
+      prompt_length: prompt.length,
+      final_length: finalPrompt.length,
+      note: "Image generated with optimized prompt length"
+    });
 
   } catch (err: any) {
     console.error("Image generation error:", err);
-    
+
     // Gestione errori specifici di OpenAI
     if (err?.error?.code === "content_policy_violation") {
-      return new Response(
-        JSON.stringify({ 
-          error: "Content policy violation", 
-          detail: "The prompt was rejected by the safety system. Please try a different prompt."
-        }),
-        {
-          status: 400,
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-        }
-      );
+      return res.status(400).json({
+        error: "Content policy violation",
+        detail: "The prompt was rejected by the safety system. Please try a different prompt."
+      });
     } else if (err?.message?.includes("length")) {
-      return new Response(
-        JSON.stringify({ 
-          error: "Prompt too long", 
-          detail: "The prompt exceeds maximum length limits. Please shorten your description."
-        }),
-        {
-          status: 400,
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-        }
-      );
+      return res.status(400).json({
+        error: "Prompt too long",
+        detail: "The prompt exceeds maximum length limits. Please shorten your description."
+      });
     } else {
-      return new Response(
-        JSON.stringify({ 
-          error: "Image generation failed", 
-          detail: String(err?.message || err) 
-        }),
-        {
-          status: 500,
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-        }
-      );
+      return res.status(500).json({
+        error: "Image generation failed",
+        detail: String(err?.message || err)
+      });
     }
   }
 }

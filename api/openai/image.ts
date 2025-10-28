@@ -2,10 +2,12 @@ import OpenAI from "openai";
 import Cors from 'cors';
 import { NextApiRequest, NextApiResponse } from 'next';
 
-// Inizializza il middleware CORS
+// Inizializza il middleware CORS - AGGIORNA QUESTI URL!
 const cors = Cors({
   origin: [
+    'https://id-preview--61f56c03-2d55-460b-9514-3ce772cd7cd0.lovable.app',
     'https://6lf56c03-2655-460b-9514-3ce77cd7cd0.lovableproject.com',
+    'https://*.lovable.app',
     'https://*.lovableproject.com'
   ],
   methods: ['GET', 'POST', 'OPTIONS'],

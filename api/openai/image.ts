@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import Cors from 'cors';
 import { NextApiRequest, NextApiResponse } from 'next';
 
-// Inizializza il middleware CORS - AGGIORNA QUESTI URL!
+// Inizializza il middleware CORS
 const cors = Cors({
   origin: [
     'https://id-preview--61f56c03-2d55-460b-9514-3ce772cd7cd0.lovable.app',
@@ -82,8 +82,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // 1. PULIZIA E RIDUZIONE DEL PROMPT
     prompt = prompt
       .replace(/scritta|testo|parola|scrivere|leggere|lettere|alfabeto|frase|didascalia|sottotitolo/gi, '')
-      .replace(/["][^"]*["]/g, '') // Rimuove testo tra virgolette
-      .replace(/\s+/g, ' ') // Riduce spazi multipli
+      .replace(/["][^"]*["]/g, '')
+      .replace(/\s+/g, ' ')
       .trim();
 
     // 2. TRONCAMENTO INTELLIGENTE (max 600 caratteri per il prompt utente)
@@ -97,16 +97,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const styleDescription = STYLES[style as keyof typeof STYLES];
     let finalPrompt = `${prompt}. ${styleDescription}. ${ANTI_TEXT_PROMPT}`;
 
-    // Verifica lunghezza totale
     if (finalPrompt.length > 800) {
       console.warn(`Final prompt too long (${finalPrompt.length} chars), optimizing...`);
-      // Riduci ulteriormente mantenendo l'essenziale
       finalPrompt = `${prompt.substring(0, 400)}. ${styleDescription}. ${ANTI_TEXT_PROMPT}`;
     }
 
     console.log(`Generating image - Style: ${style}, Prompt length: ${prompt.length}, Final length: ${finalPrompt.length}`);
 
-    // 4. GENERAZIONE IMMAGINE - CON FORMATO URL ESPLICITO
+    // 4. GENERAZIONE IMMAGINE - FORMATO BASE64 OBBLIGATORIO
     const response = await client.images.generate({
       model: "dall-e-3",
       prompt: finalPrompt,
@@ -114,25 +112,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       size: "1024x1024",
       quality: "standard",
       style: "vivid",
-      response_format: "url" // ← IMPORTANTE: forza il formato URL invece di base64
+      response_format: "b64_json" // ← QUESTA È LA CHIAVE!
     });
 
-    // Controllo optional per l'URL dell'immagine
-    const imageUrl = response.data?.[0]?.url;
+    // Controllo per i dati base64
+    const imageBase64 = response.data?.[0]?.b64_json;
 
-    if (!imageUrl) {
-      throw new Error("No image URL returned from OpenAI");
+    if (!imageBase64) {
+      console.error("❌ OpenAI non ha restituito dati base64");
+      throw new Error("No base64 image data returned from OpenAI");
     }
 
-    console.log("Image generated successfully with URL:", imageUrl);
+    console.log(`✅ Immagine base64 generata: ${imageBase64.length} caratteri`);
 
+    // 5. RESTITUISCI SOLO BASE64 - RIMUOVI IMAGE_URL
     return res.status(200).json({
-      image_url: imageUrl,
+      image_base64: imageBase64, // ← PROPRIETÀ CORRETTA
       style: style,
       prompt: prompt,
       prompt_length: prompt.length,
       final_length: finalPrompt.length,
-      note: "Image generated with optimized prompt length"
+      note: "Image generated in base64 format"
     });
 
   } catch (err: any) {

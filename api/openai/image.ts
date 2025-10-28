@@ -106,7 +106,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     console.log(`Generating image - Style: ${style}, Prompt length: ${prompt.length}, Final length: ${finalPrompt.length}`);
 
-    // 4. GENERAZIONE IMMAGINE
+    // 4. GENERAZIONE IMMAGINE - CON FORMATO URL ESPLICITO
     const response = await client.images.generate({
       model: "dall-e-3",
       prompt: finalPrompt,
@@ -114,6 +114,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       size: "1024x1024",
       quality: "standard",
       style: "vivid",
+      response_format: "url" // ← IMPORTANTE: forza il formato URL invece di base64
     });
 
     // Controllo optional per l'URL dell'immagine
@@ -122,6 +123,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!imageUrl) {
       throw new Error("No image URL returned from OpenAI");
     }
+
+    console.log("Image generated successfully with URL:", imageUrl);
 
     return res.status(200).json({
       image_url: imageUrl,

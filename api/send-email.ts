@@ -8,8 +8,8 @@ type EmailRequest = {
 };
 
 // Configurazione transporter per Aruba
-const createTransporter = () => {
-  return nodemailer.createTransporter({
+const createTransport = () => {
+  return nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtps.aruba.it',
     port: parseInt(process.env.SMTP_PORT || '587'),
     secure: process.env.SMTP_SECURE === 'true',
@@ -70,9 +70,9 @@ export async function POST(request: Request) {
     console.log('Sending email to:', to);
 
     // Invio email
-    const transporter = createTransporter();
+    
     const result = await transporter.sendMail(mailOptions);
-
+  const transporter = createTransport();
     console.log('Email sent successfully:', result.messageId);
 
     return Response.json({

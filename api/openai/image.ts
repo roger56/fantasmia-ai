@@ -115,7 +115,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   
   // ... tutto il resto del tuo codice
 }
-Fai il deploy su Vercel dopo queste modifiche e il problema CORS dovrebbe risolversi!
+//Fai il deploy su Vercel dopo queste modifiche e il problema CORS dovrebbe risolversi!
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,

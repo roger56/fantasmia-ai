@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import Cors from 'cors';
 import { NextApiRequest, NextApiResponse } from 'next';
-
+const ANTI_TEXT_PROMPT = "STRICT NO TEXT POLICY: Absolutely no text, no words, no letters, no numbers, no symbols, no signatures, no logos, no writing of any kind in any language. Completely text-free image.";
 // CONFIGURAZIONE CORS COMPLETA E SICURA
 const cors = Cors({
   origin: [
@@ -17,7 +17,7 @@ const cors = Cors({
   preflightContinue: false,
   optionsSuccessStatus: 204
 });
-const ANTI_TEXT_PROMPT = "STRICT NO TEXT POLICY: Absolutely no text, no words, no letters, no numbers, no symbols, no signatures, no logos, no writing of any kind in any language. Completely text-free image.";
+
 // Helper per eseguire il middleware
 function runMiddleware(req: NextApiRequest, res: NextApiResponse, fn: any) {
   return new Promise((resolve, reject) => {

@@ -9,8 +9,9 @@ const cors = Cors({
     'https://id-preview--61f56c03-2d55-460b-9514-3ce772cd7cd0.lovable.app', // ✅ CORRETTO CON DUE TRATTINI
     'https://6lf56c03-2655-460b-9514-3ce77cd7cd0.lovableproject.com',
     'https://*.lovable.app',
+    'https://fantasmia.it',
     'https://*.lovableproject.com'
-  ],
+     ],
   methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
   credentials: true,

@@ -1,15 +1,15 @@
 import OpenAI from "openai";
 import Cors from 'cors';
 import { NextApiRequest, NextApiResponse } from 'next';
-const ANTI_TEXT_PROMPT = "STRICT NO TEXT POLICY: Absolutely no text, no words, no letters, no numbers, no symbols, no signatures, no logos, no writing of any kind in any language. Completely text-free image.";
+
 // CONFIGURAZIONE CORS COMPLETA E SICURA
 const cors = Cors({
   origin: [
-    'https://61f56c03-2d55-460b-9514-3ce772cd7cd0.lovableproject.com', // ← PRINCIPALE
-    'https://id-preview--61f56c03-2d55-460b-9514-3ce772cd7cd0.lovable.app', // ← PREVIEW
-    'https://6lf56c03-2655-460b-9514-3ce77cd7cd0.lovableproject.com', // ← BACKUP
-    'https://*.lovable.app', // ← TUTTI I SOTTODOMINI
-    'https://*.lovableproject.com' // ← TUTTI I SOTTODOMINI
+    'https://61f56c03-2d55-460b-9514-3ce772cd7cd0.lovableproject.com',
+    'https://id-preview--61f56c03-2d55-460b-9514-3ce772cd7cd0.lovable.app', // ✅ CORRETTO CON DUE TRATTINI
+    'https://6lf56c03-2655-460b-9514-3ce77cd7cd0.lovableproject.com',
+    'https://*.lovable.app',
+    'https://*.lovableproject.com'
   ],
   methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
@@ -43,14 +43,14 @@ type Body = {
 const STYLES = {
   fumetto: "fumetto colorato, vivace, linee nette, cartoon",
   manga: "manga giapponese, bianco e nero, tratti distintivi, drammatico",
-  acquarello: "acquerello, tratti morbidi, colori pastello, sfumature",
+  acquarello: "acquerello, tratti morbidi, colori pastello, sfumatures",
   fotografico: "fotorealistico, alta definizione, illuminazione naturale",
   carboncino: "carboncino, sfumature di grigio, tratti espressivi, artistico",
   astratto: "arte astratta, forme geometriche, colori vibranti"
 };
 
-// Prompt anti-testo ottimizzato
-const ANTI_TEXT_PROMPT = "Nessun testo, nessuna scritta, nessuna parola, carattere o simbolo alfabetico";
+// Prompt anti-testo ottimizzato IN INGLESE
+const ANTI_TEXT_PROMPT = "STRICT NO TEXT POLICY: Absolutely no text, no words, no letters, no numbers, no symbols, no signatures, no logos, no writing of any kind in any language. Completely text-free image.";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Esegui il middleware CORS PER PRIMO

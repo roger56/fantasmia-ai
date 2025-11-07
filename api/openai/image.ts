@@ -2,16 +2,24 @@ import OpenAI from "openai";
 import Cors from 'cors';
 import { NextApiRequest, NextApiResponse } from 'next';
 
-// CONFIGURAZIONE CORS COMPLETA E SICURA
+// CONFIGURAZIONE CORS DINAMICA - PER TUTTI I DOMINI LOVABLE
 const cors = Cors({
-  origin: [
-    'https://61f56c03-2d55-460b-9514-3ce772cd7cd0.lovableproject.com',
-    'https://id-preview--61f56c03-2d55-460b-9514-3ce772cd7cd0.lovable.app', // ✅ CORRETTO CON DUE TRATTINI
-    'https://6lf56c03-2655-460b-9514-3ce77cd7cd0.lovableproject.com',
-    'https://*.lovable.app',
-    'https://fantasmia.it',
-    'https://*.lovableproject.com'
-     ],
+  origin: (origin, callback) => {
+    // Permetti tutti i domini Lovable + domini personalizzati
+    const allowedDomains = [
+      '.lovableproject.com',
+      '.lovable.app',
+      'fantasmia.it',
+      'localhost'
+    ];
+    
+    if (!origin || allowedDomains.some(domain => origin.includes(domain))) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked for origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
   credentials: true,

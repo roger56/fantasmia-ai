@@ -1,104 +1,100 @@
 import OpenAI from "openai";
+import Cors from 'cors';
+import { NextApiRequest, NextApiResponse } from 'next';
+
+// STESSA CONFIGURAZIONE CORS DINAMICA
+const cors = Cors({
+  origin: (origin, callback) => {
+    const allowedDomains = [
+      '.lovableproject.com',
+      '.lovable.app',
+      'fantasmia.it',
+      'localhost'
+    ];
+    
+    if (!origin || allowedDomains.some(domain => origin.includes(domain))) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked for origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+});
+
+function runMiddleware(req: NextApiRequest, res: NextApiResponse, fn: any) {
+  return new Promise((resolve, reject) => {
+    fn(req, res, (result: any) => {
+      if (result instanceof Error) {
+        return reject(result);
+      }
+      return resolve(result);
+    });
+  });
+}
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-type Body = { 
-  theme?: string;
-  style?: string;
-};
-
-export async function POST(req: Request) {
-  const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  };
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  await runMiddleware(req, res, cors);
 
   if (req.method === "OPTIONS") {
-    return new Response(null, {
-      status: 200,
-      headers: corsHeaders,
-    });
+    return res.status(200).end();
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    if (req.method !== "POST") {
-      return new Response(
-        JSON.stringify({ error: "Method not allowed" }),
-        {
-          status: 405,
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-        }
-      );
-    }
-
-    // CORREZIONE: Aggiungi "as Body" qui
-    const body = await req.json() as Body;
-    const theme = body.theme || "amore";
-    const poetryStyle = body.style || "libera";
+    const { theme, style } = req.body;
 
     if (!theme) {
-      return new Response(
-        JSON.stringify({ error: "Missing 'theme' in body" }),
-        {
-          status: 400,
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-        }
-      );
+      return res.status(400).json({ error: "Missing 'theme' in body" });
     }
 
+    const prompt = `Crea una poesia ${style || 'lirica'} sul tema: "${theme}". 
+    La poesia deve essere in italiano, evocativa e suggestiva.`;
+
     const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4",
       messages: [
         {
           role: "system",
-          content: `Sei un poeta italiano. Scrivi una poesia in italiano sul tema fornito.
-Usa lo stile poetico richiesto. Massimo 15 righe.
-Rispondi SOLO con la poesia, senza commenti aggiuntivi.`
+          content: "Sei un poeta esperto. Crea poesie evocative e suggestive in italiano, mantenendo un tono poetico e ricco di immagini."
         },
-        { 
-          role: "user", 
-          content: `Tema: ${theme}, Stile: ${poetryStyle}` 
-        },
+        {
+          role: "user",
+          content: prompt
+        }
       ],
-      temperature: 0.8,
       max_tokens: 500,
+      temperature: 0.8
     });
 
-    const output = completion.choices?.[0]?.message?.content?.trim() ?? "";
+    const poetry = completion.choices[0]?.message?.content;
 
-    return new Response(
-      JSON.stringify({ output_text: output }),
-      {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        },
-      }
-    );
+    if (!poetry) {
+      throw new Error("No poetry generated");
+    }
+
+    return res.status(200).json({
+      theme: theme,
+      style: style || 'lirica',
+      poetry: poetry
+    });
+
   } catch (err: any) {
-    console.error("poetry error:", err);
-    return new Response(
-      JSON.stringify({ 
-        error: "Poetry generation failed", 
-        detail: String(err?.message || err) 
-      }),
-      {
-        status: 500,
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        },
-      }
-    );
+    console.error("Poetry generation error:", err);
+    return res.status(500).json({
+      error: "Poetry generation failed",
+      detail: err.message
+    });
   }
 }

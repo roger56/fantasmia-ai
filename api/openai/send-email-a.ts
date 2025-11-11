@@ -49,7 +49,7 @@ export async function POST(request: Request) {
 
     // Prepara i dati per l'invio
     const emailData: any = {
-      from: 'Fantasmia AI <ai@pirotta.it>',
+      from: 'Fantasmia AI <ai@fantasmia.it>',
       to: to,
       subject: subject,
       html: emailContent,

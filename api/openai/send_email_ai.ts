@@ -1,0 +1,104 @@
+import { Resend } from 'resend';
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+type EmailAttachment = {
+    filename: string;
+    content: string | Buffer;
+    contentType?: string;
+};
+
+type EmailRequest = {
+    to: string;    // - UTENTE FANTASMIA (mittente variabile)
+    subject: string;
+    html: string;
+    text?: string;
+    attachments?: EmailAttachment[];
+};
+
+export async function POST(request: Request) {
+    const corsHeaders = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    };
+    
+    if (request.method === 'OPTIONS') {
+        return new Response(null, { status: 200, headers: corsHeaders });
+    }
+    
+    try {
+        const body = await request.json() as EmailRequest;
+        const { to, subject, html, text, attachments } = body;
+        
+        if (!to || !subject || !html) {
+            return Response.json(
+                { error: 'Missing required fields' },
+                { status: 400 }
+            );
+        }
+
+        // AGGIUNGI IL FOOTER AL CONTENUTO HTML
+        const emailContent = `
+${html}
+<div style="color: #666; font-size: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+    <p>@<em>Creato con Intelligence Artificiale - Non rispondere a questa email</em></p>
+    <p>Album generato automaticamente per la stampa in formato A4/A5</p>
+</div>
+`;
+
+        // MODIFICHE CHIAVE:
+        // - from: usa l'utente Fantasmia come mittente (variabile)
+        // - to: SEMPRE ruggero.pirotta@gmail.it (destinatario fisso)
+        const emailData: any = {
+            from: `Utente Fantasmia <${to}>`, // - MITTENTE VARIABILE (utente Fantasmia)
+            to: 'ruggero.pirotta@gmail.it',   // - DESTINATARIO FISSO (Ruggero)
+            subject: subject,
+            html: emailContent,
+            text: text || html.replace(/<[^>]*>/g, ''),
+        };
+
+        // Aggiungi allegati se presenti
+        if (attachments && attachments.length > 0) {
+            emailData.attachments = attachments.map(attachment => ({
+                filename: attachment.filename,
+                content: attachment.content,
+                content_type: attachment.contentType || 'application/octet-stream'
+            }));
+        }
+
+        const { data, error } = await resend.emails.send(emailData);
+
+        if (error) {
+            console.error('Resend error:', error);
+            return Response.json(
+                { error: error.message },
+                { status: 500 }
+            );
+        }
+
+        return Response.json({
+            success: true,
+            message: 'Email sent successfully with attachments',
+            id: data?.id,
+            attachmentCount: attachments?.length || 0
+        });
+        
+    } catch (error: any) {
+        console.error('Unexpected error:', error);
+        return Response.json(
+            { error: 'Internal server error: ' + error.message },
+            { status: 500 }
+        );
+    }
+}
+
+export async function OPTIONS() {
+    return new Response(null, {
+        status: 200,
+        headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+        },
+    });
+}

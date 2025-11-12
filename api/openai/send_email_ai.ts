@@ -51,7 +51,7 @@ ${html}
         // - to: SEMPRE ruggero.pirotta@gmail.it (destinatario fisso)
         const emailData: any = {
             from: `Utente Fantasmia <${to}>`, // - MITTENTE VARIABILE (utente Fantasmia)
-            to: 'ruggero.pirotta@gmail.it',   // - DESTINATARIO FISSO (Ruggero)
+            to: 'quando.ruggero@gmail.com',   // - DESTINATARIO FISSO (Ruggero)
             subject: subject,
             html: emailContent,
             text: text || html.replace(/<[^>]*>/g, ''),

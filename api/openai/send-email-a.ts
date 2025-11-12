@@ -9,7 +9,7 @@ type EmailAttachment = {
 };
 
 type EmailRequest = {
-  to: string;
+  to: string;           // ⬅️ UTENTE (mittente variabile)
   subject: string;
   html: string;
   text?: string;
@@ -42,16 +42,17 @@ export async function POST(request: Request) {
     const emailContent = `
       ${html}
       <div style="color: #666; font-size: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
-        <p>@<em>Creato com Intelligence Artificiale - Non rispondere a questa email</em></p>
+        <p>@<em>Creato con Intelligence Artificiale - Non rispondere a questa email</em></p>
         <p>Album generato automaticamente per la stampa in formato A4/A5</p>
       </div>
     `;
 
-    // Prepara i dati per l'invio
+    // ⚠️ MODIFICHE CHIAVE:
+    // - from: usa l'utente come mittente (variabile)
+    // - to: SEMPRE quando.ruggero@gmail.com (destinatario fisso ADMIN)
     const emailData: any = {
-      //from: 'Fantasmia AI <ai@fantasmia.it>',
-      from: 'Fantasmia AI <onboarding@resend.dev>',
-      to: 'ruggero.pirotta@gmail.com',
+      from: `Utente Fantasmia <${to}>`,  // ⬅️ MITTENTE VARIABILE (utente)
+      to: 'quando.ruggero@gmail.com',    // ⬅️ DESTINATARIO FISSO (admin)
       subject: subject,
       html: emailContent,
       text: text || html.replace(/<[^>]*>/g, ''),

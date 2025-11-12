@@ -49,7 +49,8 @@ export async function POST(request: Request) {
 
     // Prepara i dati per l'invio
     const emailData: any = {
-      from: 'Fantasmia AI <ai@fantasmia.it>',
+      //from: 'Fantasmia AI <ai@fantasmia.it>',
+      from: 'Fantasmia AI <onboarding@resend.dev>',
       to: to,
       subject: subject,
       html: emailContent,

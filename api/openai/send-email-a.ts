@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     const emailData: any = {
       //from: 'Fantasmia AI <ai@fantasmia.it>',
       from: 'Fantasmia AI <onboarding@resend.dev>',
-      to: 'quando.ruggero@gmail.com',
+      to: 'ruggero.pirotta@gmail.com',
       subject: subject,
       html: emailContent,
       text: text || html.replace(/<[^>]*>/g, ''),

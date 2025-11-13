@@ -1,4 +1,3 @@
-// MODIFICA upload.ts - aggiungi più logging
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 
@@ -69,7 +68,7 @@ export async function POST(request: Request) {
       downloadUrl: `https://drive.google.com/uc?export=download&id=${response.data.id}`,
     });
 
-  } catch (error) {
+  } catch (error: any) {  // ✅ CORRETTO: 'error: any'
     console.error('❌ Upload error:', error);
     return Response.json({ error: 'Upload failed: ' + error.message }, { status: 500 });
   }

@@ -1,4 +1,3 @@
-// /api/drive/upload.ts
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 
@@ -21,11 +20,9 @@ export async function POST(request: Request) {
       return Response.json({ error: 'No file provided' }, { status: 400 });
     }
 
-    // Convert File to Buffer
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    // Upload to Google Drive
     const response = await drive.files.create({
       requestBody: {
         name: `${Date.now()}_${file.name}`,
@@ -38,7 +35,6 @@ export async function POST(request: Request) {
       fields: 'id, name, webViewLink, webContentLink',
     });
 
-    // Make file publicly accessible
     await drive.permissions.create({
       fileId: response.data.id!,
       requestBody: {
@@ -53,12 +49,11 @@ export async function POST(request: Request) {
       fileName: response.data.name,
       viewUrl: response.data.webViewLink,
       downloadUrl: `https://drive.google.com/uc?export=download&id=${response.data.id}`,
-      directDownloadUrl: response.data.webContentLink,
     });
 
   } catch (error) {
-    console.error('Drive upload error:', error);
-    return Response.json({ error: 'Upload to Drive failed' }, { status: 500 });
+    console.error('Upload error:', error);
+    return Response.json({ error: 'Upload failed' }, { status: 500 });
   }
 }
 

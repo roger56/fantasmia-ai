@@ -1,3 +1,4 @@
+// MODIFICA upload.ts - aggiungi più logging
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 
@@ -12,16 +13,29 @@ const auth = new google.auth.GoogleAuth({
 const drive = google.drive({ version: 'v3', auth });
 
 export async function POST(request: Request) {
+  console.log('🔍 Upload API chiamata');
+  
   try {
     const formData = await request.formData();
     const file = formData.get('file') as File;
     
+    console.log('📁 File ricevuto:', file?.name);
+    
     if (!file) {
+      console.log('❌ Nessun file fornito');
       return Response.json({ error: 'No file provided' }, { status: 400 });
+    }
+
+    // Verifica credenziali
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
+      console.log('❌ Credenziali Google mancanti');
+      return Response.json({ error: 'Google credentials missing' }, { status: 500 });
     }
 
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
+    
+    console.log('📊 Dimensione file:', buffer.length, 'bytes');
 
     const response = await drive.files.create({
       requestBody: {
@@ -35,6 +49,8 @@ export async function POST(request: Request) {
       fields: 'id, name, webViewLink, webContentLink',
     });
 
+    console.log('✅ File caricato su Drive:', response.data.id);
+
     await drive.permissions.create({
       fileId: response.data.id!,
       requestBody: {
@@ -42,6 +58,8 @@ export async function POST(request: Request) {
         type: 'anyone',
       },
     });
+
+    console.log('✅ Permessi impostati');
 
     return Response.json({
       success: true,
@@ -52,8 +70,8 @@ export async function POST(request: Request) {
     });
 
   } catch (error) {
-    console.error('Upload error:', error);
-    return Response.json({ error: 'Upload failed' }, { status: 500 });
+    console.error('❌ Upload error:', error);
+    return Response.json({ error: 'Upload failed: ' + error.message }, { status: 500 });
   }
 }
 

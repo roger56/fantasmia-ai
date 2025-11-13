@@ -1,0 +1,74 @@
+// /api/drive/upload.ts
+import { google } from 'googleapis';
+import { Readable } from 'stream';
+
+const auth = new google.auth.GoogleAuth({
+  credentials: {
+    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  },
+  scopes: ['https://www.googleapis.com/auth/drive.file'],
+});
+
+const drive = google.drive({ version: 'v3', auth });
+
+export async function POST(request: Request) {
+  try {
+    const formData = await request.formData();
+    const file = formData.get('file') as File;
+    
+    if (!file) {
+      return Response.json({ error: 'No file provided' }, { status: 400 });
+    }
+
+    // Convert File to Buffer
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+
+    // Upload to Google Drive
+    const response = await drive.files.create({
+      requestBody: {
+        name: `${Date.now()}_${file.name}`,
+        parents: [process.env.GOOGLE_DRIVE_FOLDER_ID!],
+      },
+      media: {
+        mimeType: file.type,
+        body: Readable.from(buffer),
+      },
+      fields: 'id, name, webViewLink, webContentLink',
+    });
+
+    // Make file publicly accessible
+    await drive.permissions.create({
+      fileId: response.data.id!,
+      requestBody: {
+        role: 'reader',
+        type: 'anyone',
+      },
+    });
+
+    return Response.json({
+      success: true,
+      fileId: response.data.id,
+      fileName: response.data.name,
+      viewUrl: response.data.webViewLink,
+      downloadUrl: `https://drive.google.com/uc?export=download&id=${response.data.id}`,
+      directDownloadUrl: response.data.webContentLink,
+    });
+
+  } catch (error) {
+    console.error('Drive upload error:', error);
+    return Response.json({ error: 'Upload to Drive failed' }, { status: 500 });
+  }
+}
+
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
+  });
+}

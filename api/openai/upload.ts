@@ -14,6 +14,18 @@ const drive = google.drive({ version: 'v3', auth });
 export async function POST(request: Request) {
   console.log('🔍 Upload API chiamata');
   
+  // 🔴 DEBUG ESTESO - Aggiungi questa sezione
+  console.log('🔐 DEBUG CREDENZIALI:');
+  console.log('GOOGLE_SERVICE_ACCOUNT_EMAIL:', process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ? 'PRESENTE' : 'MANCANTE');
+  console.log('GOOGLE_DRIVE_FOLDER_ID:', process.env.GOOGLE_DRIVE_FOLDER_ID ? 'PRESENTE' : 'MANCANTE');
+  console.log('GOOGLE_PRIVATE_KEY length:', process.env.GOOGLE_PRIVATE_KEY?.length || 'MANCANTE');
+  console.log('GOOGLE_PRIVATE_KEY startsWith -----BEGIN:', process.env.GOOGLE_PRIVATE_KEY?.startsWith('-----BEGIN'));
+  
+  if (process.env.GOOGLE_PRIVATE_KEY) {
+    console.log('GOOGLE_PRIVATE_KEY primi 50 chars:', process.env.GOOGLE_PRIVATE_KEY.substring(0, 50));
+    console.log('GOOGLE_PRIVATE_KEY contiene \\n:', process.env.GOOGLE_PRIVATE_KEY.includes('\\n'));
+  }
+  
   try {
     const formData = await request.formData();
     const file = formData.get('file') as File;
@@ -28,7 +40,18 @@ export async function POST(request: Request) {
     // Verifica credenziali
     if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
       console.log('❌ Credenziali Google mancanti');
+      console.log('EMAIL:', process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ? 'OK' : 'MISSING');
+      console.log('KEY:', process.env.GOOGLE_PRIVATE_KEY ? 'OK' : 'MISSING');
       return Response.json({ error: 'Google credentials missing' }, { status: 500 });
+    }
+
+    // 🔴 TEST AUTH - Verifica che l'autenticazione funzioni
+    try {
+      const client = await auth.getClient();
+      console.log('✅ Autenticazione Google riuscita');
+    } catch (authError) {
+      console.error('❌ Errore autenticazione Google:', authError.message);
+      return Response.json({ error: 'Google auth failed: ' + authError.message }, { status: 500 });
     }
 
     const bytes = await file.arrayBuffer();
@@ -68,7 +91,7 @@ export async function POST(request: Request) {
       downloadUrl: `https://drive.google.com/uc?export=download&id=${response.data.id}`,
     });
 
-  } catch (error: any) {  // ✅ CORRETTO: 'error: any'
+  } catch (error: any) {
     console.error('❌ Upload error:', error);
     return Response.json({ error: 'Upload failed: ' + error.message }, { status: 500 });
   }

@@ -10,6 +10,22 @@ const auth = new google.auth.GoogleAuth({
 });
 
 const drive = google.drive({ version: 'v3', auth });
+// Aggiungi questa route temporanea per debug
+export async function GET() {
+  console.log('🔐 DEBUG ENV VARIABLES:');
+  
+  const envStatus = {
+    GOOGLE_SERVICE_ACCOUNT_EMAIL: !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    GOOGLE_PRIVATE_KEY: !!process.env.GOOGLE_PRIVATE_KEY,
+    GOOGLE_DRIVE_FOLDER_ID: !!process.env.GOOGLE_DRIVE_FOLDER_ID,
+    privateKeyLength: process.env.GOOGLE_PRIVATE_KEY?.length || 0,
+    privateKeyStart: process.env.GOOGLE_PRIVATE_KEY?.substring(0, 30) || 'MISSING'
+  };
+  
+  console.log('Environment Status:', envStatus);
+  
+  return Response.json(envStatus);
+}
 
 export async function POST(request: Request) {
   console.log('🔍 Upload API chiamata');

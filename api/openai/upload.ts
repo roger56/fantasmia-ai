@@ -50,8 +50,9 @@ export async function POST(request: Request) {
       const client = await auth.getClient();
       console.log('✅ Autenticazione Google riuscita');
     } catch (authError) {
-      console.error('❌ Errore autenticazione Google:', authError.message);
-      return Response.json({ error: 'Google auth failed: ' + authError.message }, { status: 500 });
+      console.error('❌ Errore autenticazione Google:', authError);
+      const errorMessage = authError instanceof Error ? authError.message : 'Unknown auth error';
+      return Response.json({ error: 'Google auth failed: ' + errorMessage }, { status: 500 });
     }
 
     const bytes = await file.arrayBuffer();

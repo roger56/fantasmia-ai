@@ -10,36 +10,26 @@ const auth = new google.auth.GoogleAuth({
 });
 
 const drive = google.drive({ version: 'v3', auth });
-// Aggiungi questa route temporanea per debug
+
+// ✅ UNA SOLA FUNZIONE GET - versione migliorata
 export async function GET() {
-  console.log('🔐 DEBUG ENV VARIABLES:');
+  console.log('🔍 DEBUG ENV VARIABLES:');
   
   const envStatus = {
-    GOOGLE_SERVICE_ACCOUNT_EMAIL: !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    GOOGLE_PRIVATE_KEY: !!process.env.GOOGLE_PRIVATE_KEY,
-    GOOGLE_DRIVE_FOLDER_ID: !!process.env.GOOGLE_DRIVE_FOLDER_ID,
-    privateKeyLength: process.env.GOOGLE_PRIVATE_KEY?.length || 0,
-    privateKeyStart: process.env.GOOGLE_PRIVATE_KEY?.substring(0, 30) || 'MISSING'
+    GOOGLE_SERVICE_ACCOUNT_EMAIL: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ? "PRESENTE" : "MANCANTE",
+    GOOGLE_PRIVATE_KEY: process.env.GOOGLE_PRIVATE_KEY ? `PRESENTE (${process.env.GOOGLE_PRIVATE_KEY.length} chars)` : "MANCANTE",
+    GOOGLE_DRIVE_FOLDER_ID: process.env.GOOGLE_DRIVE_FOLDER_ID ? "PRESENTE" : "MANCANTE",
+    privateKeyStartsWith: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.substring(0, 30) : "N/A",
+    privateKeyContainsNewlines: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.includes('\\n') : false,
+    privateKeyFormatCorrect: process.env.GOOGLE_PRIVATE_KEY ? 
+      process.env.GOOGLE_PRIVATE_KEY.startsWith('-----BEGIN PRIVATE KEY-----') : false
   };
   
   console.log('Environment Status:', envStatus);
   
   return Response.json(envStatus);
 }
-// Aggiungi questa funzione al tuo upload.ts
-export async function GET() {
-  const envStatus = {
-    GOOGLE_SERVICE_ACCOUNT_EMAIL: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ? "PRESENTE" : "MANCANTE",
-    GOOGLE_PRIVATE_KEY: process.env.GOOGLE_PRIVATE_KEY ? `PRESENTE (${process.env.GOOGLE_PRIVATE_KEY.length} chars)` : "MANCANTE",
-    GOOGLE_DRIVE_FOLDER_ID: process.env.GOOGLE_DRIVE_FOLDER_ID ? "PRESENTE" : "MANCANTE",
-    privateKeyStartsWith: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.substring(0, 30) : "N/A",
-    privateKeyContainsNewlines: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.includes('\\n') : false
-  };
-  
-  console.log('🔍 DEBUG ENV VARIABLES:', envStatus);
-  
-  return Response.json(envStatus);
-}
+
 export async function POST(request: Request) {
   console.log('🔍 Upload API chiamata');
   

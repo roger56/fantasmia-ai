@@ -39,6 +39,9 @@ export async function POST(request: Request) {
   console.log('GOOGLE_DRIVE_FOLDER_ID:', process.env.GOOGLE_DRIVE_FOLDER_ID ? 'PRESENTE' : 'MANCANTE');
   console.log('GOOGLE_PRIVATE_KEY length:', process.env.GOOGLE_PRIVATE_KEY?.length || 'MANCANTE');
   console.log('GOOGLE_PRIVATE_KEY startsWith -----BEGIN:', process.env.GOOGLE_PRIVATE_KEY?.startsWith('-----BEGIN'));
+   console.log('📁 GOOGLE_DRIVE_FOLDER_ID:', process.env.GOOGLE_DRIVE_FOLDER_ID);
+  console.log('📁 Folder ID length:', process.env.GOOGLE_DRIVE_FOLDER_ID?.length);
+  console.log('📁 Folder ID trimmed:', process.env.GOOGLE_DRIVE_FOLDER_ID?.trim());
   
   if (process.env.GOOGLE_PRIVATE_KEY) {
     console.log('GOOGLE_PRIVATE_KEY primi 50 chars:', process.env.GOOGLE_PRIVATE_KEY.substring(0, 50));

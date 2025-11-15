@@ -1,24 +1,22 @@
 // api/openai/upload.ts
-import { VercelRequest, VercelResponse } from '@vercel/node';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 
-interface UploadRequest {
-  filename: string;
-  file_content: string;
-  mime_type?: string;
-}
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Gestione CORS
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
+    return res.status(200).end();
   }
 
   if (req.method !== 'POST') {
@@ -26,20 +24,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { filename, file_content, mime_type = 'application/octet-stream' } = req.body as UploadRequest;
-
-    if (!filename || !file_content) {
-      return res.status(400).json({ 
-        error: 'Filename and file_content are required' 
-      });
+    // Per multipart/form-data, devi parsare manualmente
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
+    
+    // Estrai filename dal Content-Disposition header o usa un nome di default
+    const contentType = req.headers['content-type'];
+    let filename = 'uploaded_file';
+    
+    if (contentType?.includes('multipart/form-data')) {
+      // Parsing semplificato - in produzione usa una libreria come 'busboy'
+      const contentDisposition = req.headers['content-disposition'];
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="([^"]+)"/);
+        if (match) {
+          filename = match[1];
+        }
+      }
     }
 
-    const fileId = await uploadToGoogleDrive(filename, file_content, mime_type);
+    const fileId = await uploadToGoogleDrive(filename, buffer.toString('base64'), req.headers['content-type']?.split(';')[0] || 'application/octet-stream');
 
     res.status(200).json({
       success: true,
       file_id: fileId,
-      message: 'File uploaded successfully to fantasmia-upload'
+      file_name: filename,
+      message: 'File uploaded successfully to Google Drive'
     });
 
   } catch (error) {
@@ -61,7 +74,6 @@ async function uploadToGoogleDrive(
     throw new Error('Missing required environment variables for Google Drive');
   }
 
-  // Configura l'autenticazione con Google Drive
   const auth = new google.auth.GoogleAuth({
     credentials: {
       type: 'service_account',
@@ -75,15 +87,9 @@ async function uploadToGoogleDrive(
   const drive = google.drive({ version: 'v3', auth });
   const folderId = process.env.COOGLE_PRIVATE_FOLDER_ID;
 
-  // Pulisci e decodifica il contenuto base64
-  const cleanFileContent = fileContent.startsWith('data:') 
-    ? fileContent.split(',')[1] 
-    : fileContent;
-  
-  const fileBuffer = Buffer.from(cleanFileContent, 'base64');
+  const fileBuffer = Buffer.from(fileContent, 'base64');
   const readableStream = Readable.from(fileBuffer);
 
-  // Metadata del file
   const fileMetadata = {
     name: filename,
     parents: [folderId]
@@ -94,7 +100,6 @@ async function uploadToGoogleDrive(
     body: readableStream
   };
 
-  // Upload del file
   const response = await drive.files.create({
     requestBody: fileMetadata,
     media: media,

@@ -18,14 +18,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     // DEBUG: Ritorna tutte le env vars (senza valori sensibili)
     const envVars = {
-      COOGLE_SERVICE_ACCOUNT_EMAIL: process.env.COOGLE_SERVICE_ACCOUNT_EMAIL 
-        ? `Present (${process.env.COOGLE_SERVICE_ACCOUNT_EMAIL.substring(0, 10)}...)` 
+      GOOGLE_SERVICE_ACCOUNT_EMAIL: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL 
+        ? `Present (${process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL.substring(0, 10)}...)` 
         : 'MISSING',
-      COOGLE_PRIVATE_KEY: process.env.COOGLE_PRIVATE_KEY 
-        ? `Present (${process.env.COOGLE_PRIVATE_KEY.length} chars)` 
+      GOOGLE_PRIVATE_KEY: process.env.GOOGLE_PRIVATE_KEY 
+        ? `Present (${process.env.GOOGLE_PRIVATE_KEY.length} chars)` 
         : 'MISSING',
-      COOGLE_PRIVATE_FOLDER_ID: process.env.COOGLE_PRIVATE_FOLDER_ID 
-        ? `Present (${process.env.COOGLE_PRIVATE_FOLDER_ID})` 
+      GOOGLE_PRIVATE_FOLDER_ID: process.env.GOOGLE_PRIVATE_FOLDER_ID 
+        ? `Present (${process.env.GOOGLE_PRIVATE_FOLDER_ID})` 
         : 'MISSING',
       NODE_ENV: process.env.NODE_ENV,
       VERCEL_ENV: process.env.VERCEL_ENV
@@ -34,7 +34,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log('🔍 Environment Variables:', envVars);
 
     // Se mancano le variabili, ritorna il debug info
-    if (!process.env.COOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.COOGLE_PRIVATE_KEY || !process.env.COOGLE_PRIVATE_FOLDER_ID) {
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY || !process.env.GOOGLE_PRIVATE_FOLDER_ID) {
       return res.status(500).json({
         success: false,
         error: 'Missing environment variables',

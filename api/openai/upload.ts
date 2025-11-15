@@ -1,104 +1,109 @@
-# api/upload.py
-from http.server import BaseHTTPRequestHandler
-import json
-import os
-import base64
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
-import io
+// api/openai/upload.ts
+import { VercelRequest, VercelResponse } from '@vercel/node';
+import { google } from 'googleapis';
+import { Readable } from 'stream';
 
-class Handler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        try:
-            # Leggi i dati della richiesta
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            
-            data = json.loads(post_data)
-            filename = data.get('filename', 'uploaded_file')
-            file_content_b64 = data.get('file_content')  # Dati in base64
-            mime_type = data.get('mime_type', 'application/octet-stream')
-            
-            # Upload a Google Drive
-            file_id = self.upload_to_drive(filename, file_content_b64, mime_type)
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            response = {
-                'success': True,
-                'file_id': file_id,
-                'message': 'File uploaded successfully to fantasmia-upload'
-            }
-            self.wfile.write(json.dumps(response).encode())
-            
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            error_response = {
-                'success': False,
-                'error': str(e)
-            }
-            self.wfile.write(json.dumps(error_response).encode())
-    
-    def upload_to_drive(self, filename, file_content_b64, mime_type):
-        """Carica file su Google Drive usando le variabili d'ambiente"""
-        
-        # Recupera le credenziali dalle variabili d'ambiente
-        service_account_info = {
-            "type": "service_account",
-            "project_id": "pro-hour-465513-c3",
-            "private_key_id": os.environ.get('COOGLE_PRIVATE_KEY', '').replace('\\n', '\n'),
-            "private_key": os.environ.get('COOGLE_PRIVATE_KEY', '').replace('\\n', '\n'),
-            "client_email": os.environ.get('COOGLE_SERVICE_ACCOUNT_EMAIL', ''),
-            "client_id": "",  # Opzionale
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs"
-        }
-        
-        SCOPES = ['https://www.googleapis.com/auth/drive.file']
-        folder_id = os.environ.get('COOGLE_PRIVATE_FOLDER_ID', '')
-        
-        # Autenticazione con service account
-        creds = service_account.Credentials.from_service_account_info(
-            service_account_info, scopes=SCOPES)
-        
-        service = build('drive', 'v3', credentials=creds)
-        
-        # Metadata del file
-        file_metadata = {
-            'name': filename,
-            'parents': [folder_id]  # La cartella "fantasmia-upload"
-        }
-        
-        # Decodifica i dati base64
-        if file_content_b64.startswith('data:'):
-            file_content_b64 = file_content_b64.split(',')[1]
-        
-        file_data = base64.b64decode(file_content_b64)
-        
-        media = MediaIoBaseUpload(
-            io.BytesIO(file_data),
-            mimetype=mime_type,
-            resumable=True
-        )
-        
-        # Crea il file su Google Drive
-        file = service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id, webViewLink'
-        ).execute()
-        
-        return file.get('id')
+interface UploadRequest {
+  filename: string;
+  file_content: string;
+  mime_type?: string;
+}
 
-    def do_OPTIONS(self):
-        """Gestisce le preflight requests CORS"""
-        self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Gestione CORS
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  try {
+    const { filename, file_content, mime_type = 'application/octet-stream' } = req.body as UploadRequest;
+
+    if (!filename || !file_content) {
+      return res.status(400).json({ 
+        error: 'Filename and file_content are required' 
+      });
+    }
+
+    const fileId = await uploadToGoogleDrive(filename, file_content, mime_type);
+
+    res.status(200).json({
+      success: true,
+      file_id: fileId,
+      message: 'File uploaded successfully to fantasmia-upload'
+    });
+
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}
+
+async function uploadToGoogleDrive(
+  filename: string, 
+  fileContent: string, 
+  mimeType: string
+): Promise<string> {
+  
+  if (!process.env.COOGLE_PRIVATE_KEY || !process.env.COOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.COOGLE_PRIVATE_FOLDER_ID) {
+    throw new Error('Missing required environment variables for Google Drive');
+  }
+
+  // Configura l'autenticazione con Google Drive
+  const auth = new google.auth.GoogleAuth({
+    credentials: {
+      type: 'service_account',
+      project_id: 'pro-hour-465513-c3',
+      private_key: process.env.COOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      client_email: process.env.COOGLE_SERVICE_ACCOUNT_EMAIL,
+    },
+    scopes: ['https://www.googleapis.com/auth/drive.file']
+  });
+
+  const drive = google.drive({ version: 'v3', auth });
+  const folderId = process.env.COOGLE_PRIVATE_FOLDER_ID;
+
+  // Pulisci e decodifica il contenuto base64
+  const cleanFileContent = fileContent.startsWith('data:') 
+    ? fileContent.split(',')[1] 
+    : fileContent;
+  
+  const fileBuffer = Buffer.from(cleanFileContent, 'base64');
+  const readableStream = Readable.from(fileBuffer);
+
+  // Metadata del file
+  const fileMetadata = {
+    name: filename,
+    parents: [folderId]
+  };
+
+  const media = {
+    mimeType: mimeType,
+    body: readableStream
+  };
+
+  // Upload del file
+  const response = await drive.files.create({
+    requestBody: fileMetadata,
+    media: media,
+    fields: 'id, name, webViewLink'
+  });
+
+  if (!response.data.id) {
+    throw new Error('Failed to upload file to Google Drive');
+  }
+
+  return response.data.id;
+}

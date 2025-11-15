@@ -3,12 +3,6 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Gestione CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -24,29 +18,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // Per multipart/form-data, devi parsare manualmente
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      chunks.push(chunk);
-    }
-    const buffer = Buffer.concat(chunks);
-    
-    // Estrai filename dal Content-Disposition header o usa un nome di default
-    const contentType = req.headers['content-type'];
-    let filename = 'uploaded_file';
-    
-    if (contentType?.includes('multipart/form-data')) {
-      // Parsing semplificato - in produzione usa una libreria come 'busboy'
-      const contentDisposition = req.headers['content-disposition'];
-      if (contentDisposition) {
-        const match = contentDisposition.match(/filename="([^"]+)"/);
-        if (match) {
-          filename = match[1];
-        }
-      }
+    console.log('🔍 Environment variables check:');
+    console.log('COOGLE_SERVICE_ACCOUNT_EMAIL:', process.env.COOGLE_SERVICE_ACCOUNT_EMAIL ? '✅ Present' : '❌ Missing');
+    console.log('COOGLE_PRIVATE_KEY:', process.env.COOGLE_PRIVATE_KEY ? '✅ Present' : '❌ Missing');
+    console.log('COOGLE_PRIVATE_FOLDER_ID:', process.env.COOGLE_PRIVATE_FOLDER_ID ? '✅ Present' : '❌ Missing');
+
+    const { filename, file_content, mime_type = 'application/octet-stream' } = req.body;
+
+    if (!filename || !file_content) {
+      return res.status(400).json({ 
+        error: 'Filename and file_content are required' 
+      });
     }
 
-    const fileId = await uploadToGoogleDrive(filename, buffer.toString('base64'), req.headers['content-type']?.split(';')[0] || 'application/octet-stream');
+    const fileId = await uploadToGoogleDrive(filename, file_content, mime_type);
 
     res.status(200).json({
       success: true,
@@ -71,8 +56,14 @@ async function uploadToGoogleDrive(
 ): Promise<string> {
   
   if (!process.env.COOGLE_PRIVATE_KEY || !process.env.COOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.COOGLE_PRIVATE_FOLDER_ID) {
+    console.log('❌ Missing environment variables:');
+    console.log('COOGLE_PRIVATE_KEY:', process.env.COOGLE_PRIVATE_KEY ? 'Present' : 'Missing');
+    console.log('COOGLE_SERVICE_ACCOUNT_EMAIL:', process.env.COOGLE_SERVICE_ACCOUNT_EMAIL ? 'Present' : 'Missing');
+    console.log('COOGLE_PRIVATE_FOLDER_ID:', process.env.COOGLE_PRIVATE_FOLDER_ID ? 'Present' : 'Missing');
     throw new Error('Missing required environment variables for Google Drive');
   }
+
+  console.log('✅ All environment variables are present');
 
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -87,7 +78,12 @@ async function uploadToGoogleDrive(
   const drive = google.drive({ version: 'v3', auth });
   const folderId = process.env.COOGLE_PRIVATE_FOLDER_ID;
 
-  const fileBuffer = Buffer.from(fileContent, 'base64');
+  // Pulisci e decodifica il contenuto base64
+  const cleanFileContent = fileContent.startsWith('data:') 
+    ? fileContent.split(',')[1] 
+    : fileContent;
+  
+  const fileBuffer = Buffer.from(cleanFileContent, 'base64');
   const readableStream = Readable.from(fileBuffer);
 
   const fileMetadata = {
@@ -100,6 +96,7 @@ async function uploadToGoogleDrive(
     body: readableStream
   };
 
+  console.log('📤 Uploading file to Google Drive...');
   const response = await drive.files.create({
     requestBody: fileMetadata,
     media: media,
@@ -110,5 +107,6 @@ async function uploadToGoogleDrive(
     throw new Error('Failed to upload file to Google Drive');
   }
 
+  console.log('✅ File uploaded successfully:', response.data.id);
   return response.data.id;
 }

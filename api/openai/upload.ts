@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import { Readable } from 'stream';
+export const runtime = 'nodejs';
 
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -10,6 +11,31 @@ const auth = new google.auth.GoogleAuth({
 });
 
 const drive = google.drive({ version: 'v3', auth });
+function normalizePrivateKey(input?: string): string | undefined {
+  if (!input) return undefined;
+  // Se arrivano \n letterali, li trasformo in newline reali
+  let key = input.replace(/\\n/g, '\n').trim();
+  // Rimuovo eventuali doppi apici avvolgenti
+  if (key.startsWith('"') && key.endsWith('"')) {
+    key = key.slice(1, -1);
+  }
+  return key;
+}
+
+const auth = new google.auth.GoogleAuth({
+  credentials: {
+    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    private_key: normalizePrivateKey(process.env.GOOGLE_PRIVATE_KEY),
+  },
+  scopes: ['https://www.googleapis.com/auth/drive.file'],
+});
+try {
+  const client = await auth.getClient();
+  console.log('✅ Google auth OK - project id:', await auth.getProjectId());
+} catch (e) {
+  console.error('❌ Google auth FAILED:', e);
+  return Response.json({ error: 'Google auth failed: ' + (e as Error).message }, { status: 500 });
+}
 
 // ✅ UNA SOLA FUNZIONE GET - versione migliorata
 export async function GET() {
@@ -118,6 +144,17 @@ export async function POST(request: Request) {
     console.error('❌ Upload error:', error);
     return Response.json({ error: 'Upload failed: ' + error.message }, { status: 500 });
   }
+}
+export async function GET() {
+  const pk = process.env.GOOGLE_PRIVATE_KEY || '';
+  return Response.json({
+    email: !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    folder: !!process.env.GOOGLE_DRIVE_FOLDER_ID,
+    pk_present: !!pk,
+    pk_starts_begin: pk.startsWith('-----BEGIN') || pk.startsWith('"-----BEGIN') || pk.startsWith('-----BEGIN PRIVATE KEY-----\\n'),
+    pk_has_backslash_n: pk.includes('\\n'),
+    pk_length: pk.length,
+  });
 }
 
 export async function OPTIONS() {

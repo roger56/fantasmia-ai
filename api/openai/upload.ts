@@ -1,142 +1,104 @@
-import { google } from 'googleapis';
-import { Readable } from 'stream';
+# api/upload.py
+from http.server import BaseHTTPRequestHandler
+import json
+import os
+import base64
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+import io
 
-export const runtime = 'nodejs';
-
-// Funzione helper per normalizzare la private key
-function normalizePrivateKey(input?: string): string | undefined {
-  if (!input) return undefined;
-  // Se arrivano \n letterali, li trasformo in newline reali
-  let key = input.replace(/\\n/g, '\n').trim();
-  // Rimuovo eventuali doppi apici avvolgenti
-  if (key.startsWith('"') && key.endsWith('"')) {
-    key = key.slice(1, -1);
-  }
-  return key;
-}
-
-// Configurazione auth - UNA SOLA VOLTA
-const auth = new google.auth.GoogleAuth({
-  credentials: {
-    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    private_key: normalizePrivateKey(process.env.GOOGLE_PRIVATE_KEY),
-  },
-  scopes: ['https://www.googleapis.com/auth/drive.file'],
-});
-
-const drive = google.drive({ version: 'v3', auth });
-
-// ✅ UNA SOLA FUNZIONE GET per debug
-export async function GET() {
-  console.log('🔍 DEBUG ENV VARIABLES:');
-  
-  const envStatus = {
-    GOOGLE_SERVICE_ACCOUNT_EMAIL: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ? "PRESENTE" : "MANCANTE",
-    GOOGLE_PRIVATE_KEY: process.env.GOOGLE_PRIVATE_KEY ? `PRESENTE (${process.env.GOOGLE_PRIVATE_KEY.length} chars)` : "MANCANTE",
-    GOOGLE_DRIVE_FOLDER_ID: process.env.GOOGLE_DRIVE_FOLDER_ID ? "PRESENTE" : "MANCANTE",
-    privateKeyStartsWith: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.substring(0, 30) : "N/A",
-    privateKeyContainsNewlines: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.includes('\\n') : false,
-    privateKeyFormatCorrect: process.env.GOOGLE_PRIVATE_KEY ? 
-      process.env.GOOGLE_PRIVATE_KEY.startsWith('-----BEGIN PRIVATE KEY-----') : false
-  };
-  
-  console.log('Environment Status:', envStatus);
-  
-  return Response.json(envStatus);
-}
-
-// ✅ FUNZIONE POST principale
-export async function POST(request: Request) {
-  console.log('🔍 Upload API chiamata');
-  
-  // DEBUG delle credenziali
-  console.log('🔐 DEBUG CREDENZIALI:');
-  console.log('GOOGLE_SERVICE_ACCOUNT_EMAIL:', process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ? 'PRESENTE' : 'MANCANTE');
-  console.log('GOOGLE_DRIVE_FOLDER_ID:', process.env.GOOGLE_DRIVE_FOLDER_ID ? 'PRESENTE' : 'MANCANTE');
-  console.log('GOOGLE_PRIVATE_KEY length:', process.env.GOOGLE_PRIVATE_KEY?.length || 'MANCANTE');
-  
-  if (process.env.GOOGLE_PRIVATE_KEY) {
-    console.log('GOOGLE_PRIVATE_KEY primi 50 chars:', process.env.GOOGLE_PRIVATE_KEY.substring(0, 50));
-    console.log('GOOGLE_PRIVATE_KEY contiene \\n:', process.env.GOOGLE_PRIVATE_KEY.includes('\\n'));
-  }
-  
-  try {
-    const formData = await request.formData();
-    const file = formData.get('file') as File;
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        try:
+            # Leggi i dati della richiesta
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            
+            data = json.loads(post_data)
+            filename = data.get('filename', 'uploaded_file')
+            file_content_b64 = data.get('file_content')  # Dati in base64
+            mime_type = data.get('mime_type', 'application/octet-stream')
+            
+            # Upload a Google Drive
+            file_id = self.upload_to_drive(filename, file_content_b64, mime_type)
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            response = {
+                'success': True,
+                'file_id': file_id,
+                'message': 'File uploaded successfully to fantasmia-upload'
+            }
+            self.wfile.write(json.dumps(response).encode())
+            
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            error_response = {
+                'success': False,
+                'error': str(e)
+            }
+            self.wfile.write(json.dumps(error_response).encode())
     
-    console.log('📁 File ricevuto:', file?.name);
-    
-    if (!file) {
-      console.log('❌ Nessun file fornito');
-      return Response.json({ error: 'No file provided' }, { status: 400 });
-    }
+    def upload_to_drive(self, filename, file_content_b64, mime_type):
+        """Carica file su Google Drive usando le variabili d'ambiente"""
+        
+        # Recupera le credenziali dalle variabili d'ambiente
+        service_account_info = {
+            "type": "service_account",
+            "project_id": "pro-hour-465513-c3",
+            "private_key_id": os.environ.get('COOGLE_PRIVATE_KEY', '').replace('\\n', '\n'),
+            "private_key": os.environ.get('COOGLE_PRIVATE_KEY', '').replace('\\n', '\n'),
+            "client_email": os.environ.get('COOGLE_SERVICE_ACCOUNT_EMAIL', ''),
+            "client_id": "",  # Opzionale
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs"
+        }
+        
+        SCOPES = ['https://www.googleapis.com/auth/drive.file']
+        folder_id = os.environ.get('COOGLE_PRIVATE_FOLDER_ID', '')
+        
+        # Autenticazione con service account
+        creds = service_account.Credentials.from_service_account_info(
+            service_account_info, scopes=SCOPES)
+        
+        service = build('drive', 'v3', credentials=creds)
+        
+        # Metadata del file
+        file_metadata = {
+            'name': filename,
+            'parents': [folder_id]  # La cartella "fantasmia-upload"
+        }
+        
+        # Decodifica i dati base64
+        if file_content_b64.startswith('data:'):
+            file_content_b64 = file_content_b64.split(',')[1]
+        
+        file_data = base64.b64decode(file_content_b64)
+        
+        media = MediaIoBaseUpload(
+            io.BytesIO(file_data),
+            mimetype=mime_type,
+            resumable=True
+        )
+        
+        # Crea il file su Google Drive
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, webViewLink'
+        ).execute()
+        
+        return file.get('id')
 
-    // Verifica credenziali
-    if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
-      console.log('❌ Credenziali Google mancanti');
-      return Response.json({ error: 'Google credentials missing' }, { status: 500 });
-    }
-
-    // Test autenticazione
-    try {
-      const client = await auth.getClient();
-      console.log('✅ Autenticazione Google riuscita');
-    } catch (authError) {
-      console.error('❌ Errore autenticazione Google:', authError);
-      const errorMessage = authError instanceof Error ? authError.message : 'Unknown auth error';
-      return Response.json({ error: 'Google auth failed: ' + errorMessage }, { status: 500 });
-    }
-
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    
-    console.log('📊 Dimensione file:', buffer.length, 'bytes');
-
-    const response = await drive.files.create({
-      requestBody: {
-        name: `${Date.now()}_${file.name}`,
-        parents: [process.env.GOOGLE_DRIVE_FOLDER_ID!],
-      },
-      media: {
-        mimeType: file.type,
-        body: Readable.from(buffer),
-      },
-      fields: 'id, name, webViewLink, webContentLink',
-    });
-
-    console.log('✅ File caricato su Drive:', response.data.id);
-
-    await drive.permissions.create({
-      fileId: response.data.id!,
-      requestBody: {
-        role: 'reader',
-        type: 'anyone',
-      },
-    });
-
-    console.log('✅ Permessi impostati');
-
-    return Response.json({
-      success: true,
-      fileId: response.data.id,
-      fileName: response.data.name,
-      viewUrl: response.data.webViewLink,
-      downloadUrl: `https://drive.google.com/uc?export=download&id=${response.data.id}`,
-    });
-
-  } catch (error: any) {
-    console.error('❌ Upload error:', error);
-    return Response.json({ error: 'Upload failed: ' + error.message }, { status: 500 });
-  }
-}
-
-export async function OPTIONS() {
-  return new Response(null, {
-    status: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS, GET',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  });
-}
+    def do_OPTIONS(self):
+        """Gestisce le preflight requests CORS"""
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()

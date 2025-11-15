@@ -1,16 +1,9 @@
 import { google } from 'googleapis';
 import { Readable } from 'stream';
+
 export const runtime = 'nodejs';
 
-const auth = new google.auth.GoogleAuth({
-  credentials: {
-    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY, // NON serve replace, già formattata
-  },
-  scopes: ['https://www.googleapis.com/auth/drive.file'],
-});
-
-const drive = google.drive({ version: 'v3', auth });
+// Funzione helper per normalizzare la private key
 function normalizePrivateKey(input?: string): string | undefined {
   if (!input) return undefined;
   // Se arrivano \n letterali, li trasformo in newline reali
@@ -22,6 +15,7 @@ function normalizePrivateKey(input?: string): string | undefined {
   return key;
 }
 
+// Configurazione auth - UNA SOLA VOLTA
 const auth = new google.auth.GoogleAuth({
   credentials: {
     client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -29,15 +23,10 @@ const auth = new google.auth.GoogleAuth({
   },
   scopes: ['https://www.googleapis.com/auth/drive.file'],
 });
-try {
-  const client = await auth.getClient();
-  console.log('✅ Google auth OK - project id:', await auth.getProjectId());
-} catch (e) {
-  console.error('❌ Google auth FAILED:', e);
-  return Response.json({ error: 'Google auth failed: ' + (e as Error).message }, { status: 500 });
-}
 
-// ✅ UNA SOLA FUNZIONE GET - versione migliorata
+const drive = google.drive({ version: 'v3', auth });
+
+// ✅ UNA SOLA FUNZIONE GET per debug
 export async function GET() {
   console.log('🔍 DEBUG ENV VARIABLES:');
   
@@ -56,18 +45,15 @@ export async function GET() {
   return Response.json(envStatus);
 }
 
+// ✅ FUNZIONE POST principale
 export async function POST(request: Request) {
   console.log('🔍 Upload API chiamata');
   
-  // 🔴 DEBUG ESTESO - Aggiungi questa sezione
+  // DEBUG delle credenziali
   console.log('🔐 DEBUG CREDENZIALI:');
   console.log('GOOGLE_SERVICE_ACCOUNT_EMAIL:', process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ? 'PRESENTE' : 'MANCANTE');
   console.log('GOOGLE_DRIVE_FOLDER_ID:', process.env.GOOGLE_DRIVE_FOLDER_ID ? 'PRESENTE' : 'MANCANTE');
   console.log('GOOGLE_PRIVATE_KEY length:', process.env.GOOGLE_PRIVATE_KEY?.length || 'MANCANTE');
-  console.log('GOOGLE_PRIVATE_KEY startsWith -----BEGIN:', process.env.GOOGLE_PRIVATE_KEY?.startsWith('-----BEGIN'));
-   console.log('📁 GOOGLE_DRIVE_FOLDER_ID:', process.env.GOOGLE_DRIVE_FOLDER_ID);
-  console.log('📁 Folder ID length:', process.env.GOOGLE_DRIVE_FOLDER_ID?.length);
-  console.log('📁 Folder ID trimmed:', process.env.GOOGLE_DRIVE_FOLDER_ID?.trim());
   
   if (process.env.GOOGLE_PRIVATE_KEY) {
     console.log('GOOGLE_PRIVATE_KEY primi 50 chars:', process.env.GOOGLE_PRIVATE_KEY.substring(0, 50));
@@ -88,12 +74,10 @@ export async function POST(request: Request) {
     // Verifica credenziali
     if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
       console.log('❌ Credenziali Google mancanti');
-      console.log('EMAIL:', process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ? 'OK' : 'MISSING');
-      console.log('KEY:', process.env.GOOGLE_PRIVATE_KEY ? 'OK' : 'MISSING');
       return Response.json({ error: 'Google credentials missing' }, { status: 500 });
     }
 
-    // 🔴 TEST AUTH - Verifica che l'autenticazione funzioni
+    // Test autenticazione
     try {
       const client = await auth.getClient();
       console.log('✅ Autenticazione Google riuscita');
@@ -145,24 +129,13 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Upload failed: ' + error.message }, { status: 500 });
   }
 }
-export async function GET() {
-  const pk = process.env.GOOGLE_PRIVATE_KEY || '';
-  return Response.json({
-    email: !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    folder: !!process.env.GOOGLE_DRIVE_FOLDER_ID,
-    pk_present: !!pk,
-    pk_starts_begin: pk.startsWith('-----BEGIN') || pk.startsWith('"-----BEGIN') || pk.startsWith('-----BEGIN PRIVATE KEY-----\\n'),
-    pk_has_backslash_n: pk.includes('\\n'),
-    pk_length: pk.length,
-  });
-}
 
 export async function OPTIONS() {
   return new Response(null, {
     status: 200,
     headers: {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS, GET',
       'Access-Control-Allow-Headers': 'Content-Type',
     },
   });

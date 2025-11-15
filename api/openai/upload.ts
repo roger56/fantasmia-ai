@@ -1,7 +1,5 @@
 // api/openai/upload.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { google } from 'googleapis';
-import { Readable } from 'stream';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Gestione CORS
@@ -18,10 +16,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    console.log('🔍 Environment variables check:');
-    console.log('COOGLE_SERVICE_ACCOUNT_EMAIL:', process.env.COOGLE_SERVICE_ACCOUNT_EMAIL ? '✅ Present' : '❌ Missing');
-    console.log('COOGLE_PRIVATE_KEY:', process.env.COOGLE_PRIVATE_KEY ? '✅ Present' : '❌ Missing');
-    console.log('COOGLE_PRIVATE_FOLDER_ID:', process.env.COOGLE_PRIVATE_FOLDER_ID ? '✅ Present' : '❌ Missing');
+    // DEBUG: Ritorna tutte le env vars (senza valori sensibili)
+    const envVars = {
+      COOGLE_SERVICE_ACCOUNT_EMAIL: process.env.COOGLE_SERVICE_ACCOUNT_EMAIL 
+        ? `Present (${process.env.COOGLE_SERVICE_ACCOUNT_EMAIL.substring(0, 10)}...)` 
+        : 'MISSING',
+      COOGLE_PRIVATE_KEY: process.env.COOGLE_PRIVATE_KEY 
+        ? `Present (${process.env.COOGLE_PRIVATE_KEY.length} chars)` 
+        : 'MISSING',
+      COOGLE_PRIVATE_FOLDER_ID: process.env.COOGLE_PRIVATE_FOLDER_ID 
+        ? `Present (${process.env.COOGLE_PRIVATE_FOLDER_ID})` 
+        : 'MISSING',
+      NODE_ENV: process.env.NODE_ENV,
+      VERCEL_ENV: process.env.VERCEL_ENV
+    };
+
+    console.log('🔍 Environment Variables:', envVars);
+
+    // Se mancano le variabili, ritorna il debug info
+    if (!process.env.COOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.COOGLE_PRIVATE_KEY || !process.env.COOGLE_PRIVATE_FOLDER_ID) {
+      return res.status(500).json({
+        success: false,
+        error: 'Missing environment variables',
+        debug: envVars
+      });
+    }
 
     const { filename, file_content, mime_type = 'application/octet-stream' } = req.body;
 
@@ -31,13 +50,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const fileId = await uploadToGoogleDrive(filename, file_content, mime_type);
-
+    // Per ora ritorna successo fittizio con info debug
     res.status(200).json({
       success: true,
-      file_id: fileId,
+      file_id: 'debug_mode',
       file_name: filename,
-      message: 'File uploaded successfully to Google Drive'
+      message: 'Environment variables check passed',
+      debug: envVars
     });
 
   } catch (error) {
@@ -47,66 +66,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
-}
-
-async function uploadToGoogleDrive(
-  filename: string, 
-  fileContent: string, 
-  mimeType: string
-): Promise<string> {
-  
-  if (!process.env.COOGLE_PRIVATE_KEY || !process.env.COOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.COOGLE_PRIVATE_FOLDER_ID) {
-    console.log('❌ Missing environment variables:');
-    console.log('COOGLE_PRIVATE_KEY:', process.env.COOGLE_PRIVATE_KEY ? 'Present' : 'Missing');
-    console.log('COOGLE_SERVICE_ACCOUNT_EMAIL:', process.env.COOGLE_SERVICE_ACCOUNT_EMAIL ? 'Present' : 'Missing');
-    console.log('COOGLE_PRIVATE_FOLDER_ID:', process.env.COOGLE_PRIVATE_FOLDER_ID ? 'Present' : 'Missing');
-    throw new Error('Missing required environment variables for Google Drive');
-  }
-
-  console.log('✅ All environment variables are present');
-
-  const auth = new google.auth.GoogleAuth({
-    credentials: {
-      type: 'service_account',
-      project_id: 'pro-hour-465513-c3',
-      private_key: process.env.COOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      client_email: process.env.COOGLE_SERVICE_ACCOUNT_EMAIL,
-    },
-    scopes: ['https://www.googleapis.com/auth/drive.file']
-  });
-
-  const drive = google.drive({ version: 'v3', auth });
-  const folderId = process.env.COOGLE_PRIVATE_FOLDER_ID;
-
-  // Pulisci e decodifica il contenuto base64
-  const cleanFileContent = fileContent.startsWith('data:') 
-    ? fileContent.split(',')[1] 
-    : fileContent;
-  
-  const fileBuffer = Buffer.from(cleanFileContent, 'base64');
-  const readableStream = Readable.from(fileBuffer);
-
-  const fileMetadata = {
-    name: filename,
-    parents: [folderId]
-  };
-
-  const media = {
-    mimeType: mimeType,
-    body: readableStream
-  };
-
-  console.log('📤 Uploading file to Google Drive...');
-  const response = await drive.files.create({
-    requestBody: fileMetadata,
-    media: media,
-    fields: 'id, name, webViewLink'
-  });
-
-  if (!response.data.id) {
-    throw new Error('Failed to upload file to Google Drive');
-  }
-
-  console.log('✅ File uploaded successfully:', response.data.id);
-  return response.data.id;
 }

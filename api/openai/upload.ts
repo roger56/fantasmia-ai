@@ -1,4 +1,4 @@
-// api/openai/upload.ts - VERSIONE COMPLETA
+// api/openai/upload.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
@@ -18,6 +18,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    // DEBUG: Verifica le env vars corrette
+    const envVars = {
+      GOOGLE_SERVICE_ACCOUNT_EMAIL: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL 
+        ? `Present (${process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL.substring(0, 10)}...)` 
+        : 'MISSING',
+      GOOGLE_PRIVATE_KEY: process.env.GOOGLE_PRIVATE_KEY 
+        ? `Present (${process.env.GOOGLE_PRIVATE_KEY.length} chars)` 
+        : 'MISSING',
+      GOOGLE_PRIVATE_FOLDER_ID: process.env.GOOGLE_PRIVATE_FOLDER_ID 
+        ? `Present (${process.env.GOOGLE_PRIVATE_FOLDER_ID})` 
+        : 'MISSING'
+    };
+
+    console.log('🔍 Environment Variables:', envVars);
+
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY || !process.env.GOOGLE_PRIVATE_FOLDER_ID) {
+      return res.status(500).json({
+        success: false,
+        error: 'Missing environment variables',
+        debug: envVars
+      });
+    }
+
     const { filename, file_content, mime_type = 'application/octet-stream' } = req.body;
 
     if (!filename || !file_content) {
@@ -26,7 +49,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // UPLOAD REALE A GOOGLE DRIVE
     const fileId = await uploadToGoogleDrive(filename, file_content, mime_type);
 
     res.status(200).json({
@@ -82,6 +104,7 @@ async function uploadToGoogleDrive(
     body: readableStream
   };
 
+  console.log('📤 Uploading file to Google Drive...');
   const response = await drive.files.create({
     requestBody: fileMetadata,
     media: media,
@@ -92,5 +115,6 @@ async function uploadToGoogleDrive(
     throw new Error('Failed to upload file to Google Drive');
   }
 
+  console.log('✅ File uploaded successfully:', response.data.id);
   return response.data.id;
 }

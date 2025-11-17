@@ -1,4 +1,4 @@
-// api/openai/upload.ts
+// api/openai/upload.ts - VERSIONE CON DEBUG DETTAGLIATO
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
@@ -18,28 +18,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // DEBUG: Verifica le env vars corrette
-    const envVars = {
-      GOOGLE_SERVICE_ACCOUNT_EMAIL: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL 
-        ? `Present (${process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL.substring(0, 10)}...)` 
-        : 'MISSING',
-      GOOGLE_PRIVATE_KEY: process.env.GOOGLE_PRIVATE_KEY 
-        ? `Present (${process.env.GOOGLE_PRIVATE_KEY.length} chars)` 
-        : 'MISSING',
-      GOOGLE_PRIVATE_FOLDER_ID: process.env.GOOGLE_PRIVATE_FOLDER_ID 
-        ? `Present (${process.env.GOOGLE_PRIVATE_FOLDER_ID})` 
-        : 'MISSING'
-    };
+    // DEBUG DETTAGLIATO - Controlla ogni variabile separatamente
+    console.log('🔍 ENVIRONMENT VARIABLES DETAILED CHECK:');
+    
+    const missingVars: string[] = [];
+    
+    // Controlla ogni variabile individualmente
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL) {
+      console.log('❌ GOOGLE_SERVICE_ACCOUNT_EMAIL: MISSING');
+      missingVars.push('GOOGLE_SERVICE_ACCOUNT_EMAIL');
+    } else {
+      console.log(`✅ GOOGLE_SERVICE_ACCOUNT_EMAIL: PRESENT (${process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL.substring(0, 20)}...)`);
+    }
+    
+    if (!process.env.GOOGLE_PRIVATE_KEY) {
+      console.log('❌ GOOGLE_PRIVATE_KEY: MISSING');
+      missingVars.push('GOOGLE_PRIVATE_KEY');
+    } else {
+      console.log(`✅ GOOGLE_PRIVATE_KEY: PRESENT (${process.env.GOOGLE_PRIVATE_KEY.length} characters)`);
+      // Controlla se la private key ha il formato corretto
+      if (!process.env.GOOGLE_PRIVATE_KEY.includes('BEGIN PRIVATE KEY')) {
+        console.log('⚠️  GOOGLE_PRIVATE_KEY: Potrebbe non avere il formato corretto');
+      }
+    }
+    
+    if (!process.env.GOOGLE_PRIVATE_FOLDER_ID) {
+      console.log('❌ GOOGLE_PRIVATE_FOLDER_ID: MISSING');
+      missingVars.push('GOOGLE_PRIVATE_FOLDER_ID');
+    } else {
+      console.log(`✅ GOOGLE_PRIVATE_FOLDER_ID: PRESENT (${process.env.GOOGLE_PRIVATE_FOLDER_ID})`);
+    }
 
-    console.log('🔍 Environment Variables:', envVars);
-
-    if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY || !process.env.GOOGLE_PRIVATE_FOLDER_ID) {
+    // Se manca qualche variabile, ritorna errore dettagliato
+    if (missingVars.length > 0) {
+      console.log(`🚨 VARIABILI MANCANTI: ${missingVars.join(', ')}`);
       return res.status(500).json({
         success: false,
-        error: 'Missing environment variables',
-        debug: envVars
+        error: `Missing environment variables: ${missingVars.join(', ')}`,
+        missing_variables: missingVars,
+        debug: {
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ? 'PRESENT' : 'MISSING',
+          GOOGLE_PRIVATE_KEY: process.env.GOOGLE_PRIVATE_KEY ? `PRESENT (${process.env.GOOGLE_PRIVATE_KEY.length} chars)` : 'MISSING',
+          GOOGLE_PRIVATE_FOLDER_ID: process.env.GOOGLE_PRIVATE_FOLDER_ID ? 'PRESENT' : 'MISSING'
+        }
       });
     }
+
+    console.log('✅ TUTTE LE VARIABILI DI AMBIENTE SONO PRESENTI');
 
     const { filename, file_content, mime_type = 'application/octet-stream' } = req.body;
 
@@ -49,7 +74,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    console.log(`📁 Tentativo di upload: ${filename}, tipo: ${mime_type}`);
+
     const fileId = await uploadToGoogleDrive(filename, file_content, mime_type);
+
+    console.log(`🎉 UPLOAD COMPLETATO: ${fileId}`);
 
     res.status(200).json({
       success: true,
@@ -59,7 +88,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
   } catch (error) {
-    console.error('Upload error:', error);
+    console.error('❌ UPLOAD ERROR:', error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
@@ -72,6 +101,8 @@ async function uploadToGoogleDrive(
   fileContent: string, 
   mimeType: string
 ): Promise<string> {
+  
+  console.log('🔐 Autenticazione con Google Drive...');
   
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -86,12 +117,16 @@ async function uploadToGoogleDrive(
   const drive = google.drive({ version: 'v3', auth });
   const folderId = process.env.GOOGLE_PRIVATE_FOLDER_ID!;
 
+  console.log(`📂 Cartella destinazione: ${folderId}`);
+
   // Pulisci e decodifica il contenuto base64
   const cleanFileContent = fileContent.startsWith('data:') 
     ? fileContent.split(',')[1] 
     : fileContent;
   
   const fileBuffer = Buffer.from(cleanFileContent, 'base64');
+  console.log(`📊 Dimensione file: ${fileBuffer.length} bytes`);
+
   const readableStream = Readable.from(fileBuffer);
 
   const fileMetadata = {
@@ -112,7 +147,7 @@ async function uploadToGoogleDrive(
   });
 
   if (!response.data.id) {
-    throw new Error('Failed to upload file to Google Drive');
+    throw new Error('Failed to upload file to Google Drive - no file ID returned');
   }
 
   console.log('✅ File uploaded successfully:', response.data.id);

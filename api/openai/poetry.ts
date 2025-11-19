@@ -8,6 +8,8 @@ const cors = Cors({
     const allowedDomains = [
       '.lovableproject.com',
       '.lovable.app',
+      '.lovable.dev',     // 👈 aggiunto (subdomini)
+      'lovable.dev',      // 👈 aggiunto (dominio secco)
       'fantasmia.it',
       'localhost'
     ];

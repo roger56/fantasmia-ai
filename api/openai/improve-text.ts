@@ -1,3 +1,48 @@
+import { NextApiRequest, NextApiResponse } from 'next';
+import Cors from 'cors';
+import OpenAI from 'openai';
+
+// Inizializza CORS
+const cors = Cors({
+  origin: (origin, callback) => {
+    const allowedDomains = [
+      '.lovableproject.com',
+      '.lovable.app',
+      'fantasmia.it',
+      'localhost'
+    ];
+    
+    if (!origin || allowedDomains.some(domain => origin.includes(domain))) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked for origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+});
+
+// Middleware helper
+function runMiddleware(req: NextApiRequest, res: NextApiResponse, fn: any) {
+  return new Promise((resolve, reject) => {
+    fn(req, res, (result: any) => {
+      if (result instanceof Error) {
+        return reject(result);
+      }
+      return resolve(result);
+    });
+  });
+}
+
+// Inizializza OpenAI client
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+});
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   await runMiddleware(req, res, cors);
 

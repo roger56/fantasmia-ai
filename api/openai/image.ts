@@ -56,7 +56,7 @@ const STYLES = {
   fotografico: "fotorealistico, alta definizione, illuminazione naturale",
   carboncino: "carboncino, sfumature di grigio, tratti espressivi, artistico",
   astratto: "arte astratta, forme geometriche, colori vibranti",
-  sketch: "schizzo a matita, linee abbozzate, bozza preliminare, tratti grezzi, texture della carta"
+  sketch: "disegno semplice a matita, linee essenziali, forme basilari, stile da libro da colorare per bambini"
 };
 
 // Prompt anti-testo ottimizzato IN INGLESE

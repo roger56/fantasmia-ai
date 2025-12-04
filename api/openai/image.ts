@@ -52,10 +52,11 @@ type Body = {
 const STYLES = {
   fumetto: "fumetto colorato, vivace, linee nette, cartoon",
   manga: "manga giapponese, bianco e nero, tratti distintivi, drammatico",
-  acquarello: "acquerello, tratti morbidi, colori pastello, sfumatures",
+  acquarello: "acquerello, tratti morbidi, colori pastello, sfumature",
   fotografico: "fotorealistico, alta definizione, illuminazione naturale",
   carboncino: "carboncino, sfumature di grigio, tratti espressivi, artistico",
-  astratto: "arte astratta, forme geometriche, colori vibranti"
+  astratto: "arte astratta, forme geometriche, colori vibranti",
+  sketch: "schizzo a matita, linee abbozzate, bozza preliminare, tratti grezzi, texture della carta"
 };
 
 // Prompt anti-testo ottimizzato IN INGLESE

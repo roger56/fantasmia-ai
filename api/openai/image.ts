@@ -110,7 +110,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // 3. COSTRUZIONE PROMPT FINALE CON CONTROLLO LUNGHEZZA
     const styleDescription = STYLES[style as keyof typeof STYLES];
     let finalPrompt = `${prompt}. ${styleDescription}. ${ANTI_TEXT_PROMPT}`;
-let finalPrompt = `${prompt}. ${styleDescription}. ${ANTI_TEXT_PROMPT}`;
 
 if (style === 'sketch') {
     finalPrompt += ". Black and white line art only, no shading, no colors, no grayscale areas, solid black lines, pure white background.";

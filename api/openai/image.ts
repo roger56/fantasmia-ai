@@ -56,7 +56,7 @@ const STYLES = {
   fotografico: "fotorealistico, alta definizione, illuminazione naturale",
   carboncino: "carboncino, sfumature di grigio, tratti espressivi, artistico",
   astratto: "arte astratta, forme geometriche, colori vibranti",
-  sketch: "disegno semplice a matita, linee essenziali, forme basilari, stile da libro da colorare per bambini"
+  sketch: "disegno vettoriale, linea pulita, tratto spesso e nero, nessun colore, sfondo bianco, stile line art per libro da colorare per bambini di 6 anni, facile da colorare, contorni chiari"
 };
 
 // Prompt anti-testo ottimizzato IN INGLESE
@@ -110,7 +110,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // 3. COSTRUZIONE PROMPT FINALE CON CONTROLLO LUNGHEZZA
     const styleDescription = STYLES[style as keyof typeof STYLES];
     let finalPrompt = `${prompt}. ${styleDescription}. ${ANTI_TEXT_PROMPT}`;
+let finalPrompt = `${prompt}. ${styleDescription}. ${ANTI_TEXT_PROMPT}`;
 
+if (style === 'sketch') {
+    finalPrompt += ". Black and white line art only, no shading, no colors, no grayscale areas, solid black lines, pure white background.";
+}
     if (finalPrompt.length > 800) {
       console.warn(`Final prompt too long (${finalPrompt.length} chars), optimizing...`);
       finalPrompt = `${prompt.substring(0, 400)}. ${styleDescription}. ${ANTI_TEXT_PROMPT}`;
@@ -125,7 +129,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       n: 1,
       size: "1024x1024",
       quality: "standard",
-      style: "vivid",
       response_format: "b64_json"
     });
 

@@ -1,9 +1,7 @@
 // File: /api/openai/sketch.js
 
 export default async function handler(req, res) {
-// File: /api/openai/sketch.js
-
-  // ✅ AGGIUNGI CORS HEADERS
+  // ✅ CORS HEADERS
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -14,10 +12,7 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Only POST requests are allowed' });
-  }
-  
+  // ✅ SOLO POST (UNA VOLTA SOLA!)
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Only POST requests are allowed' });
   }
@@ -34,10 +29,8 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing or invalid "description" field in body' });
   }
 
-  // Costruiamo il prompt base per un disegno da colorare
   const basePrompt = `A black and white line drawing suitable for a 6-year-old child to color. The scene features: ${description}. The drawing should be clear, simple, and fun to color.`;
 
-  // Controlla la lunghezza (limite consigliato: 1000 caratteri)
   if (basePrompt.length > 1000) {
     return res.status(400).json({
       error: 'Description too long. Please shorten it to fit within prompt limits.',

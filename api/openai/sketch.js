@@ -1,18 +1,16 @@
 // File: /api/openai/sketch.js
 
 export default async function handler(req, res) {
-  // ✅ CORS HEADERS
+  // CORS headers...
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
 
-  // ✅ GESTISCI PREFLIGHT OPTIONS
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  // ✅ SOLO POST
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Only POST requests are allowed' });
   }
@@ -29,17 +27,18 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing or invalid "description" field in body' });
   }
 
-  const basePrompt = `A black and white line drawing suitable for a 6-year-old child to color. The scene features: ${description}. The drawing should be clear, simple, and fun to color.`;
+  // ✅ USA DIRETTAMENTE description COME PROMPT (già formattato dal client)
+  const finalPrompt = description;
 
-  if (basePrompt.length > 1000) {
+  // Controlla la lunghezza (aumenta il limite a 1500 per sicurezza)
+  if (finalPrompt.length > 1500) {
     return res.status(400).json({
       error: 'Description too long. Please shorten it to fit within prompt limits.',
-      promptLength: basePrompt.length
+      promptLength: finalPrompt.length
     });
   }
 
   try {
-    // ✅ CAMBIAMENTO CHIAVE: response_format: 'b64_json' invece di 'url'
     const openaiRes = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
       headers: {
@@ -48,10 +47,10 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: 'dall-e-3',
-        prompt: basePrompt,
+        prompt: finalPrompt,  // ✅ USA DIRETTAMENTE
         n: 1,
         size: '1024x1024',
-        response_format: 'b64_json'  // ← CAMBIATO DA 'url' A 'b64_json'
+        response_format: 'b64_json'  // ✅ BASE64 per evitare CORS
       })
     });
 
@@ -61,13 +60,13 @@ export default async function handler(req, res) {
       return res.status(openaiRes.status).json({ error: data.error || 'Image generation failed' });
     }
 
-    // ✅ RESTITUISCI BASE64 come data URL pronto all'uso
-    const base64Data = data.data[0].b64_json;
-    const imageDataUrl = `data:image/png;base64,${base64Data}`;
+    // ✅ RITORNA BASE64 come data URL
+    const base64Image = data.data[0].b64_json;
+    const imageDataUrl = `data:image/png;base64,${base64Image}`;
 
     return res.status(200).json({
-      imageUrl: imageDataUrl,  // ← Ora è un data:image/png;base64,... invece di URL esterno
-      prompt: basePrompt
+      imageUrl: imageDataUrl,
+      prompt: finalPrompt
     });
 
   } catch (error) {

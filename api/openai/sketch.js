@@ -30,8 +30,8 @@ export default async function handler(req, res) {
   // ✅ USA DIRETTAMENTE description COME PROMPT (già formattato dal client)
   const finalPrompt = description;
 
-  // Controlla la lunghezza (aumenta il limite a 1500 per sicurezza)
-  if (finalPrompt.length > 1500) {
+  // Controlla la lunghezza (aumenta il limite a 1000 per sicurezza)
+  if (finalPrompt.length > 1000) {
     return res.status(400).json({
       error: 'Description too long. Please shorten it to fit within prompt limits.',
       promptLength: finalPrompt.length

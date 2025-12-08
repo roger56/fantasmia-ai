@@ -1,4 +1,5 @@
 // File: /api/openai/sketch.js
+// File: /api/openai/sketch.js
 
 export default async function handler(req, res) {
   // ✅ CORS HEADERS
@@ -12,7 +13,7 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  // ✅ SOLO POST (UNA VOLTA SOLA!)
+  // ✅ SOLO POST
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Only POST requests are allowed' });
   }
@@ -39,6 +40,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    // ✅ CAMBIAMENTO CHIAVE: response_format: 'b64_json' invece di 'url'
     const openaiRes = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
       headers: {
@@ -50,7 +52,7 @@ export default async function handler(req, res) {
         prompt: basePrompt,
         n: 1,
         size: '1024x1024',
-        response_format: 'url'
+        response_format: 'b64_json'  // ← CAMBIATO DA 'url' A 'b64_json'
       })
     });
 
@@ -60,8 +62,12 @@ export default async function handler(req, res) {
       return res.status(openaiRes.status).json({ error: data.error || 'Image generation failed' });
     }
 
+    // ✅ RESTITUISCI BASE64 come data URL pronto all'uso
+    const base64Data = data.data[0].b64_json;
+    const imageDataUrl = `data:image/png;base64,${base64Data}`;
+
     return res.status(200).json({
-      imageUrl: data.data[0].url,
+      imageUrl: imageDataUrl,  // ← Ora è un data:image/png;base64,... invece di URL esterno
       prompt: basePrompt
     });
 

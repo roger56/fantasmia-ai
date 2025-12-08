@@ -1,19 +1,49 @@
-// /api/openai/image2sketch.ts
+// /api/openai/image2sketch.ts - Versione con type guard
 
 import type { NextApiRequest, NextApiResponse } from 'next'
 
+// Definiamo i tipi per le risposte di Replicate
+interface ReplicatePredictionResponse {
+  id: string;
+  status: 'starting' | 'processing' | 'succeeded' | 'failed' | 'canceled';
+  output?: string | string[];
+  error?: any;
+}
+
+// Type guard per verificare se un oggetto è un ReplicatePredictionResponse
+function isReplicatePredictionResponse(obj: any): obj is ReplicatePredictionResponse {
+  return obj && 
+         typeof obj.id === 'string' && 
+         typeof obj.status === 'string' &&
+         ['starting', 'processing', 'succeeded', 'failed', 'canceled'].includes(obj.status);
+}
+
 // Utility per convertire immagine URL in base64
 async function imageUrlToBase64(imageUrl: string): Promise<string> {
-  const res = await fetch(imageUrl);
-  const buffer = await res.arrayBuffer();
-  const base64 = Buffer.from(buffer).toString('base64');
+  try {
+    const res = await fetch(imageUrl);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch image: ${res.status} ${res.statusText}`);
+    }
+    
+    const buffer = await res.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString('base64');
 
-  // Prova a capire il tipo MIME dall’estensione
-  const mimeType = imageUrl.endsWith('.jpg') || imageUrl.endsWith('.jpeg')
-    ? 'image/jpeg'
-    : 'image/png';
+    // Determina il tipo MIME dal content-type o dall'estensione
+    const contentType = res.headers.get('content-type');
+    let mimeType = 'image/png'; // default
+    
+    if (contentType && contentType.startsWith('image/')) {
+      mimeType = contentType;
+    } else if (imageUrl.endsWith('.jpg') || imageUrl.endsWith('.jpeg')) {
+      mimeType = 'image/jpeg';
+    }
 
-  return `data:${mimeType};base64,${base64}`;
+    return `data:${mimeType};base64,${base64}`;
+  } catch (error) {
+    console.error('Error converting image to base64:', error);
+    throw error;
+  }
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -46,16 +76,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       })
     });
 
-    const prediction = await predictionRes.json();
-    if (predictionRes.status !== 201) {
-      return res.status(500).json({ error: 'Prediction failed to start', detail: prediction });
+    if (!predictionRes.ok) {
+      const errorData = await predictionRes.json();
+      return res.status(predictionRes.status).json({ 
+        error: 'Failed to start prediction', 
+        detail: errorData 
+      });
     }
 
-    const predictionId = prediction.id;
+    const predictionData = await predictionRes.json();
+    
+    if (!isReplicatePredictionResponse(predictionData)) {
+      return res.status(500).json({ 
+        error: 'Invalid response from Replicate API'
+      });
+    }
+
+    const predictionId = predictionData.id;
 
     // Step 2: Polling fino a completamento
-    const maxWait = 30000;
-    const pollInterval = 1000;
+    const maxWait = 30000; // 30 secondi
+    const pollInterval = 1000; // 1 secondo
     let outputUrl: string | null = null;
     let elapsed = 0;
 
@@ -64,29 +105,72 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         headers: { 'Authorization': `Token ${replicateToken}` }
       });
 
-      const statusData = await statusRes.json();
-
-      if (statusData.status === 'succeeded') {
-        outputUrl = statusData.output;
-        break;
-      } else if (statusData.status === 'failed') {
-        return res.status(500).json({ error: 'Sketch generation failed', detail: statusData });
+      if (!statusRes.ok) {
+        const errorData = await statusRes.json();
+        return res.status(statusRes.status).json({ 
+          error: 'Failed to get prediction status',
+          detail: errorData
+        });
       }
 
-      await new Promise(r => setTimeout(r, pollInterval));
+      const statusData = await statusRes.json();
+      
+      if (!isReplicatePredictionResponse(statusData)) {
+        return res.status(500).json({ 
+          error: 'Invalid status response from Replicate API'
+        });
+      }
+
+      if (statusData.status === 'succeeded') {
+        // L'output può essere una stringa o un array di stringhe
+        if (typeof statusData.output === 'string') {
+          outputUrl = statusData.output;
+        } else if (Array.isArray(statusData.output) && statusData.output.length > 0) {
+          outputUrl = statusData.output[0];
+        } else if (statusData.output) {
+          console.warn('Unexpected output format:', statusData.output);
+        }
+        break;
+      } else if (statusData.status === 'failed') {
+        return res.status(500).json({ 
+          error: 'Sketch generation failed', 
+          detail: statusData.error || statusData
+        });
+      } else if (statusData.status === 'canceled') {
+        return res.status(500).json({ 
+          error: 'Sketch generation was canceled'
+        });
+      }
+
+      // Attendi prima del prossimo poll
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
       elapsed += pollInterval;
     }
 
     if (!outputUrl) {
-      return res.status(500).json({ error: 'Sketch generation timed out' });
+      return res.status(500).json({ 
+        error: 'Sketch generation timed out',
+        detail: `No output after ${maxWait / 1000} seconds`
+      });
     }
 
     // Step 3: Convertiamo l'immagine finale in base64
     const base64Image = await imageUrlToBase64(outputUrl);
 
-    return res.status(200).json({ base64: base64Image });
+    return res.status(200).json({ 
+      success: true,
+      base64: base64Image,
+      message: 'Sketch generated successfully'
+    });
 
   } catch (err) {
-    return res.status(500).json({ error: 'Internal error', detail: (err as Error).message });
+    console.error('Error in image2sketch API:', err);
+    
+    const error = err as Error;
+    return res.status(500).json({ 
+      error: 'Internal server error',
+      detail: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 }

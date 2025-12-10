@@ -1,20 +1,28 @@
 // /api/openai/image2sketch.ts - Versione con type guard
-export default async function handler(req, res) {
-  // ===== CORS HEADERS - METTI QUESTI ALL'INIZIO =====
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  // Gestisci preflight OPTIONS request
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  // Verifica che sia POST
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-  // ===== FINE CORS =====
+// CONFIGURAZIONE CORS DINAMICA - PER TUTTI I DOMINI LOVABLE
+const cors = Cors({
+  origin: (origin, callback) => {
+    // Permetti tutti i domini Lovable + domini personalizzati
+    const allowedDomains = [
+      '.lovableproject.com',
+      '.lovable.app',
+      'fantasmia.it',
+      'localhost'
+    ];
+    
+    if (!origin || allowedDomains.some(domain => origin.includes(domain))) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked for origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+});
 import type { NextApiRequest, NextApiResponse } from 'next'
 
 // Definiamo i tipi per le risposte di Replicate

@@ -1,4 +1,5 @@
 // /api/openai/image2sketch.ts - Versione con type guard
+import Cors from 'cors';
 // CONFIGURAZIONE CORS DINAMICA - PER TUTTI I DOMINI LOVABLE
 const cors = Cors({
   origin: (origin, callback) => {

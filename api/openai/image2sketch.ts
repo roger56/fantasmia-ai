@@ -1,16 +1,19 @@
-// /api/openai/image2sketch.ts - Versione con type guard
+// /api/openai/image2sketch.ts
+
+import type { NextApiRequest, NextApiResponse } from 'next';
 import Cors from 'cors';
-// CONFIGURAZIONE CORS DINAMICA - PER TUTTI I DOMINI LOVABLE
+
+// CORS: consenti domini Lovable + localhost + dominio tuo
 const cors = Cors({
   origin: (origin, callback) => {
-    // Permetti tutti i domini Lovable + domini personalizzati
     const allowedDomains = [
       '.lovableproject.com',
       '.lovable.app',
+      'localhost',
+      'fantasmia-ai.vercel.app',
       'fantasmia.it',
-      'localhost'
     ];
-    
+
     if (!origin || allowedDomains.some(domain => origin.includes(domain))) {
       callback(null, true);
     } else {
@@ -18,29 +21,51 @@ const cors = Cors({
       callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
-  credentials: true,
-  preflightContinue: false,
-  optionsSuccessStatus: 204
+  credentials: false,
 });
-import type { NextApiRequest, NextApiResponse } from 'next'
 
-// Definiamo i tipi per le risposte di Replicate
-interface ReplicatePredictionResponse {
-  id: string;
-  status: 'starting' | 'processing' | 'succeeded' | 'failed' | 'canceled';
-  output?: string | string[];
-  error?: any;
+// helper per usare il middleware con Next
+function runMiddleware(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  fn: (req: any, res: any, cb: (result?: any) => void) => void
+) {
+  return new Promise((resolve, reject) => {
+    fn(req, res, result => {
+      if (result instanceof Error) return reject(result);
+      return resolve(result);
+    });
+  });
 }
 
-// Type guard per verificare se un oggetto è un ReplicatePredictionResponse
-function isReplicatePredictionResponse(obj: any): obj is ReplicatePredictionResponse {
-  return obj && 
-         typeof obj.id === 'string' && 
-         typeof obj.status === 'string' &&
-         ['starting', 'processing', 'succeeded', 'failed', 'canceled'].includes(obj.status);
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // esegui sempre CORS
+  try {
+    await runMiddleware(req, res, cors);
+  } catch (e) {
+    console.error('CORS error:', e);
+    return res.status(403).json({ error: 'CORS not allowed' });
+  }
+
+  // gestisci la preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Only POST requests are allowed' });
+  }
+
+  // da qui in giù resta tutta la tua logica esistente:
+  // - lettura di imageUrl dal body
+  // - uso di REPLICATE_API_TOKEN
+  // - polling su Replicate
+  // - conversione a base64
+  // - res.status(200).json({ base64: base64Image })
 }
+
 
 // Utility per convertire immagine URL in base64
 async function imageUrlToBase64(imageUrl: string): Promise<string> {

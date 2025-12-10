@@ -1,5 +1,20 @@
 // /api/openai/image2sketch.ts - Versione con type guard
+export default async function handler(req, res) {
+  // ===== CORS HEADERS - METTI QUESTI ALL'INIZIO =====
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
+  // Gestisci preflight OPTIONS request
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  // Verifica che sia POST
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+  // ===== FINE CORS =====
 import type { NextApiRequest, NextApiResponse } from 'next'
 
 // Definiamo i tipi per le risposte di Replicate

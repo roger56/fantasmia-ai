@@ -107,6 +107,13 @@ export default async function handler(
       });
     }
 console.log("REPLICATE ERROR:", createRes.status, createData);
+    if (!createRes.ok) {
+  return res.status(createRes.status).json({
+    error: "Replicate rejected the request",
+    detail: createData
+  });
+}
+
 
     const predictionId = createData.id as string;
     if (!predictionId) {

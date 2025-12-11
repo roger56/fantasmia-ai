@@ -2,32 +2,49 @@
 
 import type { NextApiRequest, NextApiResponse } from "next";
 
-// Tipo (semplice) per la risposta di stato di Replicate
-type ReplicateStatusResponse = {
-  id?: string;
-  status: "starting" | "processing" | "succeeded" | "failed" | string;
-  output?: string | string[];
-  [key: string]: any;
-};
+// --- Tipi per la risposta di Replicate ---
+type ReplicateStatus =
+  | "starting"
+  | "processing"
+  | "succeeded"
+  | "failed"
+  | "canceled";
 
-// Utility per convertire immagine URL in base64
+interface ReplicatePredictionResponse {
+  id: string;
+  status: ReplicateStatus;
+  output?: string | string[];
+  error?: any;
+}
+
+// --- Helper CORS molto semplice ---
+function applyCors(res: NextApiResponse) {
+  res.setHeader("Access-Control-Allow-Origin", "*"); // se vuoi, limita ai tuoi domini
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,POST,OPTIONS,PUT,DELETE"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, Accept, X-Requested-With"
+  );
+}
+
+// --- Converte una URL immagine in dataURL base64 ---
 async function imageUrlToBase64(imageUrl: string): Promise<string> {
   const res = await fetch(imageUrl);
-
   if (!res.ok) {
-    throw new Error(`Failed to download sketch image: ${res.status} ${res.statusText}`);
+    throw new Error(`Failed to fetch image: ${res.status} ${res.statusText}`);
   }
 
   const buffer = await res.arrayBuffer();
   const base64 = Buffer.from(buffer).toString("base64");
 
-  // Prova a ricavare il MIME type dall'header Content-Type,
-  // se non disponibile usa l'estensione dell'URL come fallback
   const contentType = res.headers.get("content-type");
   let mimeType = "image/png";
 
-  if (contentType) {
-    mimeType = contentType.split(";")[0];
+  if (contentType && contentType.startsWith("image/")) {
+    mimeType = contentType;
   } else if (imageUrl.endsWith(".jpg") || imageUrl.endsWith(".jpeg")) {
     mimeType = "image/jpeg";
   }
@@ -35,15 +52,27 @@ async function imageUrlToBase64(imageUrl: string): Promise<string> {
   return `data:${mimeType};base64,${base64}`;
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
+  applyCors(res);
+
+  // Gestione preflight
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Only POST requests are allowed" });
   }
 
-  const { imageUrl } = req.body;
+  const { imageUrl } = req.body || {};
 
   if (!imageUrl || typeof imageUrl !== "string") {
-    return res.status(400).json({ error: 'Missing or invalid "imageUrl"' });
+    return res
+      .status(400)
+      .json({ error: 'Missing or invalid "imageUrl" field in body' });
   }
 
   const replicateToken = process.env.REPLICATE_API_TOKEN;
@@ -54,80 +83,121 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    // Step 1: avvio della prediction su Replicate
-    const predictionRes = await fetch("https://api.replicate.com/v1/predictions", {
+    // STEP 1 – avvio prediction su Replicate
+    const createRes = await fetch("https://api.replicate.com/v1/predictions", {
       method: "POST",
       headers: {
         Authorization: `Token ${replicateToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        // Versione del modello sketch / edge-detection che stai usando
-        version: "21e52f1f6fd34a90df69ef1c59efb6e7e96c9ce14b10b6df988675b011b5b3b0",
+        version:
+          "21e52f1f6fd34a90df69ef1c59efb6e7e96c9ce14b10b6df988675b011b5b3b0",
         input: { image: imageUrl },
       }),
     });
 
-    const prediction: any = await predictionRes.json();
+    const createData =
+      (await createRes.json()) as ReplicatePredictionResponse | any;
 
-    if (predictionRes.status !== 201) {
-      return res
-        .status(500)
-        .json({ error: "Prediction failed to start", detail: prediction });
+    if (!createRes.ok) {
+      return res.status(createRes.status).json({
+        error: "Prediction failed to start",
+        detail: createData,
+      });
     }
 
-    const predictionId: string | undefined = prediction.id;
+    const predictionId = createData.id as string;
     if (!predictionId) {
       return res
         .status(500)
-        .json({ error: "Missing prediction id from Replicate response", detail: prediction });
+        .json({ error: "Missing prediction id in Replicate response" });
     }
 
-    // Step 2: Polling fino a completamento
-    const maxWait = 30000; // 30 secondi
-    const pollInterval = 1000;
-    let outputUrl: string | null = null;
+    // STEP 2 – polling dello stato
+    const maxWaitMs = 30000;
+    const pollIntervalMs = 1000;
     let elapsed = 0;
+    let outputUrl: string | null = null;
 
-    while (elapsed < maxWait) {
+    while (elapsed < maxWaitMs) {
       const statusRes = await fetch(
         `https://api.replicate.com/v1/predictions/${predictionId}`,
         {
-          headers: { Authorization: `Token ${replicateToken}` },
+          headers: {
+            Authorization: `Token ${replicateToken}`,
+          },
         }
       );
 
-      const statusData = (await statusRes.json()) as ReplicateStatusResponse;
-
-      if (statusData.status === "succeeded") {
-        // output può essere string o array di string
-        if (Array.isArray(statusData.output)) {
-          outputUrl = statusData.output[0] ?? null;
-        } else {
-          outputUrl = statusData.output ?? null;
-        }
-        break;
-      } else if (statusData.status === "failed") {
-        return res
-          .status(500)
-          .json({ error: "Sketch generation failed", detail: statusData });
+      if (!statusRes.ok) {
+        const errorData = await statusRes.json();
+        return res.status(statusRes.status).json({
+          error: "Failed to get prediction status",
+          detail: errorData,
+        });
       }
 
-      await new Promise((r) => setTimeout(r, pollInterval));
-      elapsed += pollInterval;
+      const statusData =
+        (await statusRes.json()) as ReplicatePredictionResponse;
+
+      if (!statusData || typeof statusData.status !== "string") {
+        return res.status(500).json({
+          error: "Invalid status response from Replicate API",
+          detail: statusData,
+        });
+      }
+
+      if (statusData.status === "succeeded") {
+        if (typeof statusData.output === "string") {
+          outputUrl = statusData.output;
+        } else if (
+          Array.isArray(statusData.output) &&
+          statusData.output.length > 0
+        ) {
+          outputUrl = statusData.output[0];
+        }
+        break;
+      }
+
+      if (statusData.status === "failed") {
+        return res.status(500).json({
+          error: "Sketch generation failed",
+          detail: statusData.error || statusData,
+        });
+      }
+
+      if (statusData.status === "canceled") {
+        return res.status(500).json({
+          error: "Sketch generation was canceled",
+        });
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      elapsed += pollIntervalMs;
     }
 
     if (!outputUrl) {
-      return res.status(500).json({ error: "Sketch generation timed out" });
+      return res.status(500).json({
+        error: "Sketch generation timed out",
+        detail: `No output after ${maxWaitMs / 1000} seconds`,
+      });
     }
 
-    // Step 3: converte l'immagine finale in base64
+    // STEP 3 – converte in base64
     const base64Image = await imageUrlToBase64(outputUrl);
 
-    return res.status(200).json({ base64: base64Image });
+    return res.status(200).json({
+      success: true,
+      base64: base64Image,
+      message: "Sketch generated successfully",
+    });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Unknown error during sketch generation";
-    return res.status(500).json({ error: "Internal error", detail: message });
+    console.error("Error in image2sketch API:", err);
+    const error = err as Error;
+    return res.status(500).json({
+      error: "Internal server error",
+      detail: error.message,
+    });
   }
 }

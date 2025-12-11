@@ -1,225 +1,133 @@
 // /api/openai/image2sketch.ts
 
-import type { NextApiRequest, NextApiResponse } from 'next';
-import Cors from 'cors';
+import type { NextApiRequest, NextApiResponse } from "next";
 
-// CORS: consenti domini Lovable + localhost + dominio tuo
-const cors = Cors({
-  origin: (origin, callback) => {
-    const allowedDomains = [
-      '.lovableproject.com',
-      '.lovable.app',
-      'localhost',
-      'fantasmia-ai.vercel.app',
-      'fantasmia.it',
-    ];
-
-    if (!origin || allowedDomains.some(domain => origin.includes(domain))) {
-      callback(null, true);
-    } else {
-      console.log('CORS blocked for origin:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
-  credentials: false,
-});
-
-// helper per usare il middleware con Next
-function runMiddleware(
-  req: NextApiRequest,
-  res: NextApiResponse,
-  fn: (req: any, res: any, cb: (result?: any) => void) => void
-) {
-  return new Promise((resolve, reject) => {
-    fn(req, res, result => {
-      if (result instanceof Error) return reject(result);
-      return resolve(result);
-    });
-  });
-}
-
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // esegui sempre CORS
-  try {
-    await runMiddleware(req, res, cors);
-  } catch (e) {
-    console.error('CORS error:', e);
-    return res.status(403).json({ error: 'CORS not allowed' });
-  }
-
-  // gestisci la preflight
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Only POST requests are allowed' });
-  }
-
-  // da qui in giù resta tutta la tua logica esistente:
-  // - lettura di imageUrl dal body
-  // - uso di REPLICATE_API_TOKEN
-  // - polling su Replicate
-  // - conversione a base64
-  // - res.status(200).json({ base64: base64Image })
-}
-
+// Tipo (semplice) per la risposta di stato di Replicate
+type ReplicateStatusResponse = {
+  id?: string;
+  status: "starting" | "processing" | "succeeded" | "failed" | string;
+  output?: string | string[];
+  [key: string]: any;
+};
 
 // Utility per convertire immagine URL in base64
 async function imageUrlToBase64(imageUrl: string): Promise<string> {
-  try {
-    const res = await fetch(imageUrl);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch image: ${res.status} ${res.statusText}`);
-    }
-    
-    const buffer = await res.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString('base64');
+  const res = await fetch(imageUrl);
 
-    // Determina il tipo MIME dal content-type o dall'estensione
-    const contentType = res.headers.get('content-type');
-    let mimeType = 'image/png'; // default
-    
-    if (contentType && contentType.startsWith('image/')) {
-      mimeType = contentType;
-    } else if (imageUrl.endsWith('.jpg') || imageUrl.endsWith('.jpeg')) {
-      mimeType = 'image/jpeg';
-    }
-
-    return `data:${mimeType};base64,${base64}`;
-  } catch (error) {
-    console.error('Error converting image to base64:', error);
-    throw error;
+  if (!res.ok) {
+    throw new Error(`Failed to download sketch image: ${res.status} ${res.statusText}`);
   }
+
+  const buffer = await res.arrayBuffer();
+  const base64 = Buffer.from(buffer).toString("base64");
+
+  // Prova a ricavare il MIME type dall'header Content-Type,
+  // se non disponibile usa l'estensione dell'URL come fallback
+  const contentType = res.headers.get("content-type");
+  let mimeType = "image/png";
+
+  if (contentType) {
+    mimeType = contentType.split(";")[0];
+  } else if (imageUrl.endsWith(".jpg") || imageUrl.endsWith(".jpeg")) {
+    mimeType = "image/jpeg";
+  }
+
+  return `data:${mimeType};base64,${base64}`;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Only POST requests are allowed' });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Only POST requests are allowed" });
   }
 
   const { imageUrl } = req.body;
 
-  if (!imageUrl || typeof imageUrl !== 'string') {
+  if (!imageUrl || typeof imageUrl !== "string") {
     return res.status(400).json({ error: 'Missing or invalid "imageUrl"' });
   }
 
   const replicateToken = process.env.REPLICATE_API_TOKEN;
   if (!replicateToken) {
-    return res.status(500).json({ error: 'Missing REPLICATE_API_TOKEN in env variables' });
+    return res
+      .status(500)
+      .json({ error: "Missing REPLICATE_API_TOKEN in environment variables" });
   }
 
   try {
-    // Step 1: Chiamata al modello sketch-image
-    const predictionRes = await fetch('https://api.replicate.com/v1/predictions', {
-      method: 'POST',
+    // Step 1: avvio della prediction su Replicate
+    const predictionRes = await fetch("https://api.replicate.com/v1/predictions", {
+      method: "POST",
       headers: {
-        'Authorization': `Token ${replicateToken}`,
-        'Content-Type': 'application/json'
+        Authorization: `Token ${replicateToken}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        // Versione del modello sketch / edge-detection che stai usando
         version: "21e52f1f6fd34a90df69ef1c59efb6e7e96c9ce14b10b6df988675b011b5b3b0",
-        input: { image: imageUrl }
-      })
+        input: { image: imageUrl },
+      }),
     });
 
-    if (!predictionRes.ok) {
-      const errorData = await predictionRes.json();
-      return res.status(predictionRes.status).json({ 
-        error: 'Failed to start prediction', 
-        detail: errorData 
-      });
+    const prediction: any = await predictionRes.json();
+
+    if (predictionRes.status !== 201) {
+      return res
+        .status(500)
+        .json({ error: "Prediction failed to start", detail: prediction });
     }
 
-    const predictionData = await predictionRes.json();
-    
-    if (!isReplicatePredictionResponse(predictionData)) {
-      return res.status(500).json({ 
-        error: 'Invalid response from Replicate API'
-      });
+    const predictionId: string | undefined = prediction.id;
+    if (!predictionId) {
+      return res
+        .status(500)
+        .json({ error: "Missing prediction id from Replicate response", detail: prediction });
     }
-
-    const predictionId = predictionData.id;
 
     // Step 2: Polling fino a completamento
     const maxWait = 30000; // 30 secondi
-    const pollInterval = 1000; // 1 secondo
+    const pollInterval = 1000;
     let outputUrl: string | null = null;
     let elapsed = 0;
 
     while (elapsed < maxWait) {
-      const statusRes = await fetch(`https://api.replicate.com/v1/predictions/${predictionId}`, {
-        headers: { 'Authorization': `Token ${replicateToken}` }
-      });
+      const statusRes = await fetch(
+        `https://api.replicate.com/v1/predictions/${predictionId}`,
+        {
+          headers: { Authorization: `Token ${replicateToken}` },
+        }
+      );
 
-      if (!statusRes.ok) {
-        const errorData = await statusRes.json();
-        return res.status(statusRes.status).json({ 
-          error: 'Failed to get prediction status',
-          detail: errorData
-        });
-      }
+      const statusData = (await statusRes.json()) as ReplicateStatusResponse;
 
-      const statusData = await statusRes.json();
-      
-      if (!isReplicatePredictionResponse(statusData)) {
-        return res.status(500).json({ 
-          error: 'Invalid status response from Replicate API'
-        });
-      }
-
-      if (statusData.status === 'succeeded') {
-        // L'output può essere una stringa o un array di stringhe
-        if (typeof statusData.output === 'string') {
-          outputUrl = statusData.output;
-        } else if (Array.isArray(statusData.output) && statusData.output.length > 0) {
-          outputUrl = statusData.output[0];
-        } else if (statusData.output) {
-          console.warn('Unexpected output format:', statusData.output);
+      if (statusData.status === "succeeded") {
+        // output può essere string o array di string
+        if (Array.isArray(statusData.output)) {
+          outputUrl = statusData.output[0] ?? null;
+        } else {
+          outputUrl = statusData.output ?? null;
         }
         break;
-      } else if (statusData.status === 'failed') {
-        return res.status(500).json({ 
-          error: 'Sketch generation failed', 
-          detail: statusData.error || statusData
-        });
-      } else if (statusData.status === 'canceled') {
-        return res.status(500).json({ 
-          error: 'Sketch generation was canceled'
-        });
+      } else if (statusData.status === "failed") {
+        return res
+          .status(500)
+          .json({ error: "Sketch generation failed", detail: statusData });
       }
 
-      // Attendi prima del prossimo poll
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      await new Promise((r) => setTimeout(r, pollInterval));
       elapsed += pollInterval;
     }
 
     if (!outputUrl) {
-      return res.status(500).json({ 
-        error: 'Sketch generation timed out',
-        detail: `No output after ${maxWait / 1000} seconds`
-      });
+      return res.status(500).json({ error: "Sketch generation timed out" });
     }
 
-    // Step 3: Convertiamo l'immagine finale in base64
+    // Step 3: converte l'immagine finale in base64
     const base64Image = await imageUrlToBase64(outputUrl);
 
-    return res.status(200).json({ 
-      success: true,
-      base64: base64Image,
-      message: 'Sketch generated successfully'
-    });
-
+    return res.status(200).json({ base64: base64Image });
   } catch (err) {
-    console.error('Error in image2sketch API:', err);
-    
-    const error = err as Error;
-    return res.status(500).json({ 
-      error: 'Internal server error',
-      detail: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+    const message =
+      err instanceof Error ? err.message : "Unknown error during sketch generation";
+    return res.status(500).json({ error: "Internal error", detail: message });
   }
 }

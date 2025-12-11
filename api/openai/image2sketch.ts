@@ -106,6 +106,7 @@ export default async function handler(
         detail: createData,
       });
     }
+console.log("REPLICATE ERROR:", createRes.status, createData);
 
     const predictionId = createData.id as string;
     if (!predictionId) {

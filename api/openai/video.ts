@@ -79,8 +79,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const body = req.body as Body;
-    let text = body.text?.trim() || "";
+   let body: any = req.body;
+
+// Se arriva come stringa (capita su alcuni setup/proxy), prova a parsare
+if (typeof body === "string") {
+  try {
+    body = JSON.parse(body);
+  } catch {
+    body = {};
+  }
+}
+
+const text = (body?.text ?? "").toString().trim();
+
 
     if (!text) {
       return res.status(400).json({ error: "Missing 'text' in body" });

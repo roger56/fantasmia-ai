@@ -36,6 +36,7 @@ function runMiddleware(req: NextApiRequest, res: NextApiResponse, fn: any) {
   });
 }
 
+// (Nota: client non usato qui, ma lo lascio per coerenza col tuo template)
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -53,6 +54,14 @@ type Body = {
   audio?: boolean;
   language?: "it" | "en";
   seed?: number;
+};
+
+// Tipo minimo della risposta OpenAI (job async)
+type VideoCreateResponse = {
+  id?: string;
+  status?: string;
+  video_url?: string;
+  [key: string]: unknown;
 };
 
 const MAX_PROMPT_LENGTH = 1200;
@@ -82,7 +91,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       text = text.substring(0, MAX_PROMPT_LENGTH);
     }
 
-    const payload: any = {
+    const payload: Record<string, unknown> = {
       model: "sora-2",
       prompt: text,
       duration: body.duration ?? 8,
@@ -116,7 +125,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       body: JSON.stringify(payload),
     });
 
-    const data = await response.json();
+    // ✅ FIX TS18046: parse + cast sicuro
+    const raw: unknown = await response.json();
+    const data: VideoCreateResponse =
+      typeof raw === "object" && raw !== null ? (raw as VideoCreateResponse) : {};
 
     if (!response.ok) {
       console.error("OpenAI video error:", data);
@@ -126,11 +138,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
+    // se OpenAI non restituisce id/status per qualche motivo, meglio gestire
+    if (!data.id) {
+      return res.status(502).json({
+        error: "Video generation returned no job id",
+        detail: data,
+      });
+    }
+
     return res.status(200).json({
       job_id: data.id,
-      status: data.status,
+      status: data.status ?? "unknown",
       prompt_length: text.length,
       note: "Video job created (async)",
+      // opzionale: se ti torna subito un url
+      video_url: typeof data.video_url === "string" ? data.video_url : undefined,
     });
 
   } catch (err: any) {

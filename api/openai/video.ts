@@ -81,7 +81,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
    let body: any = req.body;
 
-// Se arriva come stringa (capita su alcuni setup/proxy), prova a parsare
 if (typeof body === "string") {
   try {
     body = JSON.parse(body);
@@ -90,17 +89,19 @@ if (typeof body === "string") {
   }
 }
 
-const text = (body?.text ?? "").toString().trim();
+let text = (body?.text ?? "").toString().trim();
 
+if (!text) {
+  return res.status(400).json({
+    error: "Missing 'text' in body",
+    received_type: typeof req.body,
+  });
+}
 
-    if (!text) {
-      return res.status(400).json({ error: "Missing 'text' in body" });
-    }
-
-    if (text.length > MAX_PROMPT_LENGTH) {
-      console.warn(`Video prompt too long (${text.length}), truncating`);
-      text = text.substring(0, MAX_PROMPT_LENGTH);
-    }
+if (text.length > MAX_PROMPT_LENGTH) {
+  console.warn(`Video prompt too long (${text.length}), truncating`);
+  text = text.substring(0, MAX_PROMPT_LENGTH);
+}
 
     const payload: Record<string, unknown> = {
       model: "sora-2",

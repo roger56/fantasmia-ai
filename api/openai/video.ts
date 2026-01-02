@@ -1,9 +1,47 @@
+import Cors from "cors";
+import { NextApiRequest, NextApiResponse } from "next";
+
+// CONFIGURAZIONE CORS DINAMICA - PER TUTTI I DOMINI LOVABLE (come image.ts)
+const cors = Cors({
+  origin: (origin, callback) => {
+    const allowedDomains = [
+      ".lovableproject.com",
+      ".lovable.app",
+      "fantasmia.it",
+      "localhost",
+    ];
+
+    if (!origin || allowedDomains.some((domain) => origin.includes(domain))) {
+      callback(null, true);
+    } else {
+      console.log("CORS blocked for origin:", origin);
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  methods: ["GET", "POST", "OPTIONS", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+});
+
+// Helper per eseguire il middleware
+function runMiddleware(req: NextApiRequest, res: NextApiResponse, fn: any) {
+  return new Promise((resolve, reject) => {
+    fn(req, res, (result: any) => {
+      if (result instanceof Error) return reject(result);
+      return resolve(result);
+    });
+  });
+}
+
 // ===== Tipi aggiornati =====
 type Body = {
   text?: string;
-  prompt?: string;
+  prompt?: string; // accetta anche prompt per compatibilità client
   seconds?: 4 | 8 | 12;
-  size?: string;
+  size?: string;        // es. "1280x720"
+  resolution?: string;  // alias
   style?: string;
   input_reference?: string;
 };
@@ -11,12 +49,16 @@ type Body = {
 const MAX_PROMPT_LENGTH = 1200;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // CORS per primo
   await runMiddleware(req, res, cors);
 
   if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
 
   try {
+    // Body robusto: può arrivare come stringa JSON
     let body: any = req.body;
     if (typeof body === "string") {
       try { body = JSON.parse(body); } catch { body = {}; }
@@ -37,15 +79,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       text = text.substring(0, MAX_PROMPT_LENGTH);
     }
 
-    // Costruisci payload con SOLO parametri validi per OpenAI /v1/videos
+    // Payload SOLO con parametri previsti dal tuo schema /v1/videos
     const payload: Record<string, unknown> = {
       model: "sora-2",
       prompt: text,
-      seconds: body.seconds ?? 8, // 4 | 8 | 12
-      size: body.size ?? body.resolution ?? "1280x720",
+      seconds: (body.seconds ?? 8) as 4 | 8 | 12,
+      size: body.size ?? body.resolution ?? body.size ?? "1280x720",
     };
 
-    // Opzionali se forniti
     if (body.style) payload.style = body.style;
     if (body.input_reference) payload.input_reference = body.input_reference;
 
@@ -89,6 +130,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       note: "Video job created (async)",
       video_url: typeof data.video_url === "string" ? data.video_url : undefined,
     });
+
   } catch (err: any) {
     console.error("Video generation error:", err);
     return res.status(500).json({

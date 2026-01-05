@@ -1,14 +1,59 @@
+import Cors from "cors";
+import type { NextApiRequest, NextApiResponse } from "next";
+
+// ===== CORS (coerente col tuo stile) =====
+const cors = Cors({
+  origin: (origin, callback) => {
+    const allowedDomains = [
+      ".lovableproject.com",
+      ".lovable.app",
+      "fantasmia.it",
+      "localhost",
+    ];
+
+    if (!origin || allowedDomains.some((d) => origin.includes(d))) {
+      callback(null, true);
+    } else {
+      console.log("CORS blocked for origin:", origin);
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  methods: ["GET", "POST", "OPTIONS", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+});
+
+// ===== Middleware helper =====
+function runMiddleware(req: NextApiRequest, res: NextApiResponse, fn: any) {
+  return new Promise<void>((resolve, reject) => {
+    fn(req, res, (result: any) => {
+      if (result instanceof Error) return reject(result);
+      resolve();
+    });
+  });
+}
+
 // ===== Tipi aggiornati =====
 type Body = {
   text?: string;
   prompt?: string;
   seconds?: 4 | 8 | 12;
   size?: string;
+  resolution?: string;
   style?: string;
   input_reference?: string;
 };
 
 const MAX_PROMPT_LENGTH = 1200;
+
+function normalizeSeconds(x: any): 4 | 8 | 12 {
+  const n = Number(x);
+  if (n === 4) return 4;
+  if (n === 12) return 12;
+  return 8;
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   await runMiddleware(req, res, cors);
@@ -18,8 +63,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     let body: any = req.body;
+
+    // Body può arrivare come stringa JSON
     if (typeof body === "string") {
-      try { body = JSON.parse(body); } catch { body = {}; }
+      try {
+        body = JSON.parse(body);
+      } catch {
+        body = {};
+      }
     }
 
     // Accetta sia "text" che "prompt"
@@ -37,17 +88,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       text = text.substring(0, MAX_PROMPT_LENGTH);
     }
 
-    // Costruisci payload con SOLO parametri validi per OpenAI /v1/videos
+    // Costruisci payload con SOLO parametri previsti dal tuo schema /v1/videos
     const payload: Record<string, unknown> = {
       model: "sora-2",
       prompt: text,
-      seconds: body.seconds ?? 8, // 4 | 8 | 12
-      size: body.size ?? body.resolution ?? "1280x720",
+      seconds: normalizeSeconds(body?.seconds),
+      size: (body?.size ?? body?.resolution ?? "1280x720").toString(),
     };
 
-    // Opzionali se forniti
-    if (body.style) payload.style = body.style;
-    if (body.input_reference) payload.input_reference = body.input_reference;
+    if (body?.style) payload.style = body.style;
+    if (body?.input_reference) payload.input_reference = body.input_reference;
 
     console.log("🎬 Generating video with Sora 2", {
       prompt_length: text.length,
@@ -65,12 +115,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
 
     const rawText = await response.text();
-let data: any = {};
-try { data = rawText ? JSON.parse(rawText) : {}; } catch {}
+    let data: any = {};
+    try {
+      data = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      data = { raw: rawText };
+    }
 
-console.log("OPENAI videos status:", response.status);
-console.log("OPENAI videos raw:", rawText);
-
+    console.log("OPENAI videos status:", response.status);
+    console.log("OPENAI videos raw:", rawText);
 
     if (!response.ok) {
       console.error("OpenAI video error:", data);
@@ -80,7 +133,7 @@ console.log("OPENAI videos raw:", rawText);
       });
     }
 
-    if (!data.id) {
+    if (!data?.id) {
       return res.status(502).json({
         error: "Video generation returned no job id",
         detail: data,
@@ -102,4 +155,3 @@ console.log("OPENAI videos raw:", rawText);
     });
   }
 }
-

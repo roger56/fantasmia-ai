@@ -68,7 +68,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!password) return res.status(400).json({ error: "Missing password" });
 
   // 5) DEMO: password server-side (env var), non salvata nel browser
-  const expected = (process.env.ADMIN_PASSWORD_PLAIN || "Roger-1").trim();
+  const expected = (process.env.ADMIN_PASSWORD_PLAIN ||"Roger-1").trim();
   if (password !== expected) {
     return res.status(401).json({ error: "Invalid credentials" });
   }

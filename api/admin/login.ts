@@ -12,10 +12,15 @@ const allowedOrigins: Array<string | RegExp> = [
   "https://fantasmia.it",
   "https://www.fantasmia.it",
   /^https:\/\/.*\.lovableproject\.com$/, // preview Lovable
-  "https://lovable.dev",                // editor Lovable (se serve)
+  /^https:\/\/.*\.lovable\.app$/,        // <-- AGGIUNGI (preview/hosting lovable)
+  "https://lovable.app",                 // <-- AGGIUNGI
+  "https://www.lovable.app",             // <-- AGGIUNGI
+  "https://lovable.dev",
+  /^https:\/\/.*\.lovable\.dev$/,        // <-- AGGIUNGI (se capita)
   "http://localhost:5173",
   "http://localhost:3000",
 ];
+
 
 function isOriginAllowed(origin: string) {
   return allowedOrigins.some((o) => (typeof o === "string" ? o === origin : o.test(origin)));

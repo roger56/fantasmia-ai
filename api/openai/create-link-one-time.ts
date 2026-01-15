@@ -37,7 +37,11 @@ function setCors(req: NextApiRequest, res: NextApiResponse) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, X-Requested-With");
+    // IMPORTANT: include Authorization header for Bearer token
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Accept, X-Requested-With, Authorization"
+    );
     res.setHeader("Vary", "Origin");
     return true;
   }
@@ -45,24 +49,74 @@ function setCors(req: NextApiRequest, res: NextApiResponse) {
   return false;
 }
 
-// Admin check (DEMO): cookie "admin_session=ok"
-function requireAdmin(req: NextApiRequest): boolean {
-  return (req.headers.cookie || "").includes("admin_session=ok");
+// --------------------
+// ADMIN Bearer JWT verify (HS256) — no deps
+// --------------------
+function b64urlToBuf(s: string) {
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4);
+  return Buffer.from(b64, "base64");
 }
 
-// base64url encode
 function b64url(input: Buffer | string) {
   const b = Buffer.isBuffer(input) ? input : Buffer.from(input);
   return b.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
-// HMAC sign
-function sign(payloadJson: string, secret: string) {
+function signHS256(data: string, secret: string) {
+  return b64url(crypto.createHmac("sha256", secret).update(data).digest());
+}
+
+function safeEqual(a: string, b: string) {
+  // constant-time compare
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
+function verifyAdminBearer(req: NextApiRequest): { ok: true } | { ok: false; error: string } {
+  const secret = process.env.ADMIN_JWT_SECRET;
+  if (!secret) return { ok: false, error: "Missing ADMIN_JWT_SECRET" };
+
+  const auth = (req.headers.authorization || "").trim();
+  if (!auth.toLowerCase().startsWith("bearer ")) return { ok: false, error: "Missing Bearer token" };
+
+  const token = auth.slice(7).trim();
+  const parts = token.split(".");
+  if (parts.length !== 3) return { ok: false, error: "Invalid token format" };
+
+  const [hB64, pB64, sig] = parts;
+  const toSign = `${hB64}.${pB64}`;
+  const expectedSig = signHS256(toSign, secret);
+
+  if (!safeEqual(sig, expectedSig)) return { ok: false, error: "Invalid token signature" };
+
+  // decode payload
+  let payload: any = null;
+  try {
+    payload = JSON.parse(b64urlToBuf(pB64).toString("utf8"));
+  } catch {
+    return { ok: false, error: "Invalid token payload" };
+  }
+
+  // basic checks
+  const nowSec = Math.floor(Date.now() / 1000);
+  const exp = typeof payload?.exp === "number" ? payload.exp : 0;
+
+  if (!exp || nowSec >= exp) return { ok: false, error: "Token expired" };
+  if (payload?.role !== "ADMIN") return { ok: false, error: "Not an admin token" };
+
+  return { ok: true };
+}
+
+// --------------------
+// One-time token helpers (HMAC over payload JSON)
+// --------------------
+function signOneTime(payloadJson: string, secret: string) {
   return b64url(crypto.createHmac("sha256", secret).update(payloadJson).digest());
 }
 
 function randomUsername() {
-  // es: NSU-7K4Q2H
   const s = crypto.randomBytes(4).toString("hex").toUpperCase();
   return `NSU-${s}`;
 }
@@ -79,7 +133,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   if (!corsOk) return res.status(403).json({ ok: false, error: "CORS origin not allowed" });
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
 
-  if (!requireAdmin(req)) return res.status(401).json({ ok: false, error: "Admin only" });
+  // ✅ Admin authorization via Bearer JWT
+  const adminCheck = verifyAdminBearer(req);
+  if (!adminCheck.ok) return res.status(401).json({ ok: false, error: adminCheck.error });
 
   const secret = process.env.NSU_ONE_TIME_SECRET;
   if (!secret) return res.status(500).json({ ok: false, error: "Missing NSU_ONE_TIME_SECRET" });
@@ -101,20 +157,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   const now = Date.now();
   const invite_exp_ms = now + 12 * 60 * 60 * 1000; // scadenza invito: 12 ore
 
-  // Payload minimale (firmato)
+  // Payload minimale (firmato) per token NSU one-time
   const payload = {
     v: 1,
     type: "NSU_ONE_TIME",
     username,
-    ttl_h,               // durata sessione dal claim (ore)
-    iat: now,            // issued at
-    invite_exp: invite_exp_ms, // scadenza invito (ms epoch)
+    ttl_h,
+    iat: now,
+    invite_exp: invite_exp_ms,
     label: (body.label || "").trim() || undefined,
   };
 
   const payloadJson = JSON.stringify(payload);
-  const sig = sign(payloadJson, secret);
-const token = `${b64url(payloadJson)}.${sig}`;
+  const sig = signOneTime(payloadJson, secret);
+  const token = `${b64url(payloadJson)}.${sig}`;
 
   const baseUrl = (process.env.PUBLIC_BASE_URL || "https://fantasmia.it").replace(/\/$/, "");
   const link = `${baseUrl}/one-time?token=${encodeURIComponent(token)}`;

@@ -90,7 +90,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     cookie.serialize("admin_session", "ok", {
       httpOnly: true,
       secure: isProd,     // in prod deve essere true
-      sameSite: "lax",    // con fetch cross-site spesso "lax" è più tollerante di "strict"
+      sameSite: "none",    // con fetch cross-site spesso "lax" è più tollerante di "strict"
       path: "/",
       maxAge: 60 * 60,    // 1h
     })

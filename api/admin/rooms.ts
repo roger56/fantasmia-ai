@@ -18,6 +18,36 @@ type RoomState = {
 
   expires_at: number;
 };
+const allowedOrigins: Array<string | RegExp> = [
+  "https://fantasmia.it",
+  "https://www.fantasmia.it",
+  /^https:\/\/.*\.lovableproject\.com$/,
+  /^https:\/\/.*\.lovable\.app$/,
+  "https://lovable.app",
+  "https://www.lovable.app",
+  "https://lovable.dev",
+  /^https:\/\/.*\.lovable\.dev$/,
+  "http://localhost:5173",
+  "http://localhost:3000",
+];
+
+function isAllowedOrigin(origin?: string) {
+  if (!origin) return false;
+  return allowedOrigins.some((o) =>
+    typeof o === "string" ? o === origin : o.test(origin)
+  );
+}
+
+function setCors(req: any, res: any) {
+  const origin = req.headers.origin;
+  if (isAllowedOrigin(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Max-Age", "86400");
+}
 
 const rooms = new Map<string, RoomState>();
 
@@ -56,6 +86,8 @@ function verifyAdmin(req: NextApiRequest) {
 
 // ---------- API ----------
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
+	setCors(req, res);
+if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).end();
 
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
@@ -163,3 +195,4 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
 
   return res.status(400).json({ error: "unknown action" });
 }
+

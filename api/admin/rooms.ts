@@ -7,6 +7,7 @@ ROOMS V2 — Classroom reale con round-robin writers
 - JWT admin (Bearer)
 - Multi-room in RAM (demo)
 - Turni con NEXT / PAUSE / RESUME
+- Dashboard support: LIST_ROOMS + STOP_TURN
 */
 
 type RoomState = {
@@ -20,9 +21,9 @@ type RoomState = {
   current_writer_index: number;
 
   // Turn management
-  turn_ends_at: number | null;            // timestamp ms quando finisce il turno (se attivo)
-  turn_paused: boolean;                  // true se in pausa
-  turn_remaining_ms: number | null;      // ms residui salvati al momento della pausa
+  turn_ends_at: number | null; // timestamp ms quando finisce il turno (se attivo)
+  turn_paused: boolean; // true se in pausa
+  turn_remaining_ms: number | null; // ms residui salvati al momento della pausa
 
   expires_at: number;
 };
@@ -75,6 +76,10 @@ function clampNumber(x: any, fallback: number, min?: number, max?: number) {
   if (typeof min === "number" && n < min) return min;
   if (typeof max === "number" && n > max) return max;
   return n;
+}
+
+function normalizeKey(x: any) {
+  return (x && String(x).trim()) || "";
 }
 
 // ---------- ADMIN JWT VERIFY ----------
@@ -137,6 +142,42 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     return res.json({ success: true, ok: true, now: now() });
   }
 
+  // -------- LIST ROOMS (ADMIN) --------
+  if (action === "list_rooms") {
+    if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
+
+    // purge expired rooms
+    const t = now();
+    for (const [k, st] of rooms.entries()) {
+      if (t > st.expires_at) rooms.delete(k);
+    }
+
+    const out = Array.from(rooms.entries()).map(([room, room_state]) => ({
+      room,
+      room_state,
+    }));
+
+    // (opzionale) ordinamento: scadenza crescente
+    out.sort((a, b) => (a.room_state.expires_at || 0) - (b.room_state.expires_at || 0));
+
+    return res.json({ success: true, rooms: out, now: t });
+  }
+
+  // -------- STOP TURN (ADMIN) --------
+  if (action === "stop_turn") {
+    if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
+
+    const key = normalizeKey(body.room);
+    const st = rooms.get(key);
+    if (!st) return res.status(404).json({ error: "room not found" });
+
+    st.turn_ends_at = null;
+    st.turn_paused = false;
+    st.turn_remaining_ms = null;
+
+    return res.json({ success: true, room_state: st });
+  }
+
   // -------- CREATE --------
   if (action === "create") {
     if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
@@ -148,12 +189,10 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       ttl_h = 4,
     } = body;
 
-    const room = (room_name && String(room_name).trim()) || randomId();
+    const room = normalizeKey(room_name) || randomId();
     const expires_at = now() + clampNumber(ttl_h, 4, 1, 24) * 3600 * 1000;
 
-    // activity_title never undefined
-    const activity_title_safe =
-      (activity_title && String(activity_title).trim()) || room;
+    const activity_title_safe = normalizeKey(activity_title) || room;
 
     rooms.set(room, {
       room_name: room,
@@ -178,8 +217,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
 
   // -------- JOIN (writer enters) --------
   if (action === "join") {
-    const { room } = body;
-    const key = (room && String(room).trim()) || "";
+    const key = normalizeKey(body.room);
     const st = rooms.get(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
@@ -203,8 +241,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (action === "next_turn") {
     if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
 
-    const { room, turn_s = 180 } = body;
-    const key = (room && String(room).trim()) || "";
+    const key = normalizeKey(body.room);
     const st = rooms.get(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
@@ -219,7 +256,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     st.turn_paused = false;
     st.turn_remaining_ms = null;
 
-    const turnSeconds = clampNumber(turn_s, 180, 15, 600);
+    const turnSeconds = clampNumber(body.turn_s, 180, 15, 600);
     st.turn_ends_at = now() + turnSeconds * 1000;
 
     return res.json({ success: true, room_state: st });
@@ -229,8 +266,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (action === "pause_turn") {
     if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
 
-    const { room } = body;
-    const key = (room && String(room).trim()) || "";
+    const key = normalizeKey(body.room);
     const st = rooms.get(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
@@ -258,8 +294,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (action === "resume_turn") {
     if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
 
-    const { room } = body;
-    const key = (room && String(room).trim()) || "";
+    const key = normalizeKey(body.room);
     const st = rooms.get(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
@@ -277,8 +312,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
 
   // -------- SUBMIT TEXT (NSU) --------
   if (action === "submit_text") {
-    const { room, writer_id, text } = body;
-    const key = (room && String(room).trim()) || "";
+    const key = normalizeKey(body.room);
     const st = rooms.get(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
@@ -286,12 +320,13 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       return res.status(409).json({ error: "turn paused" });
     }
 
+    const writer_id = normalizeKey(body.writer_id);
     const current = st.writers[st.current_writer_index];
     if (writer_id !== current) {
       return res.status(403).json({ error: "not your turn" });
     }
 
-    st.story_so_far += `\n${String(text || "")}`;
+    st.story_so_far += `\n${String(body.text || "")}`;
     st.current_writer_index =
       (st.current_writer_index + 1) % st.writers.length;
 
@@ -305,8 +340,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
 
   // -------- GET STATE (polling) --------
   if (action === "get_state") {
-    const { room } = body;
-    const key = (room && String(room).trim()) || "";
+    const key = normalizeKey(body.room);
     const st = rooms.get(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 

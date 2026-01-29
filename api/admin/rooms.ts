@@ -3,6 +3,10 @@ import crypto from "crypto";
 
 /*
 ROOMS V2 — Classroom reale con round-robin writers
+- CORS per prod + preview Lovable
+- JWT admin (Bearer)
+- Multi-room in RAM (demo)
+- Turni con NEXT / PAUSE / RESUME
 */
 
 type RoomState = {
@@ -14,7 +18,11 @@ type RoomState = {
 
   writers: string[];
   current_writer_index: number;
-  turn_ends_at: number | null;
+
+  // Turn management
+  turn_ends_at: number | null;            // timestamp ms quando finisce il turno (se attivo)
+  turn_paused: boolean;                  // true se in pausa
+  turn_remaining_ms: number | null;      // ms residui salvati al momento della pausa
 
   expires_at: number;
 };
@@ -59,6 +67,14 @@ function now() {
 
 function randomId() {
   return crypto.randomBytes(3).toString("hex").toUpperCase();
+}
+
+function clampNumber(x: any, fallback: number, min?: number, max?: number) {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return fallback;
+  if (typeof min === "number" && n < min) return min;
+  if (typeof max === "number" && n > max) return max;
+  return n;
 }
 
 // ---------- ADMIN JWT VERIFY ----------
@@ -129,14 +145,13 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       room_name,
       activity_title,
       room_mode = "CONTINUA_TU",
-      turn_s = 180,
       ttl_h = 4,
     } = body;
 
     const room = (room_name && String(room_name).trim()) || randomId();
-    const expires_at = now() + Number(ttl_h) * 3600 * 1000;
+    const expires_at = now() + clampNumber(ttl_h, 4, 1, 24) * 3600 * 1000;
 
-    // PATCH 1: activity_title never undefined
+    // activity_title never undefined
     const activity_title_safe =
       (activity_title && String(activity_title).trim()) || room;
 
@@ -149,6 +164,8 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       writers: [],
       current_writer_index: 0,
       turn_ends_at: null,
+      turn_paused: false,
+      turn_remaining_ms: null,
       expires_at,
     });
 
@@ -191,7 +208,6 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     const st = rooms.get(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
-    // PATCH 2: handle 0 writers to avoid modulo by 0
     if (!st.writers || st.writers.length === 0) {
       return res.status(409).json({ error: "no writers yet" });
     }
@@ -199,7 +215,62 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     st.current_writer_index =
       (st.current_writer_index + 1) % st.writers.length;
 
-    st.turn_ends_at = now() + Number(turn_s) * 1000;
+    // reset pause flags and start a new turn
+    st.turn_paused = false;
+    st.turn_remaining_ms = null;
+
+    const turnSeconds = clampNumber(turn_s, 180, 15, 600);
+    st.turn_ends_at = now() + turnSeconds * 1000;
+
+    return res.json({ success: true, room_state: st });
+  }
+
+  // -------- PAUSE TURN (SU) --------
+  if (action === "pause_turn") {
+    if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
+
+    const { room } = body;
+    const key = (room && String(room).trim()) || "";
+    const st = rooms.get(key);
+    if (!st) return res.status(404).json({ error: "room not found" });
+
+    if (!st.writers || st.writers.length === 0) {
+      return res.status(409).json({ error: "no writers yet" });
+    }
+
+    if (st.turn_paused) {
+      return res.status(409).json({ error: "already paused" });
+    }
+
+    if (st.turn_ends_at == null) {
+      return res.status(409).json({ error: "no active turn" });
+    }
+
+    const remaining = Math.max(0, st.turn_ends_at - now());
+    st.turn_paused = true;
+    st.turn_remaining_ms = remaining;
+    st.turn_ends_at = null;
+
+    return res.json({ success: true, room_state: st });
+  }
+
+  // -------- RESUME TURN (SU) --------
+  if (action === "resume_turn") {
+    if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
+
+    const { room } = body;
+    const key = (room && String(room).trim()) || "";
+    const st = rooms.get(key);
+    if (!st) return res.status(404).json({ error: "room not found" });
+
+    if (!st.turn_paused || st.turn_remaining_ms == null) {
+      return res.status(409).json({ error: "not paused" });
+    }
+
+    const remaining = Math.max(0, st.turn_remaining_ms);
+    st.turn_paused = false;
+    st.turn_remaining_ms = null;
+    st.turn_ends_at = now() + remaining;
 
     return res.json({ success: true, room_state: st });
   }
@@ -211,6 +282,10 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     const st = rooms.get(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
+    if (st.turn_paused) {
+      return res.status(409).json({ error: "turn paused" });
+    }
+
     const current = st.writers[st.current_writer_index];
     if (writer_id !== current) {
       return res.status(403).json({ error: "not your turn" });
@@ -219,6 +294,10 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     st.story_so_far += `\n${String(text || "")}`;
     st.current_writer_index =
       (st.current_writer_index + 1) % st.writers.length;
+
+    // after submit, auto-start next writer turn (default 180s)
+    st.turn_paused = false;
+    st.turn_remaining_ms = null;
     st.turn_ends_at = now() + 180 * 1000;
 
     return res.json({ success: true, room_state: st });

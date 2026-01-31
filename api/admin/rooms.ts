@@ -1,30 +1,56 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "crypto";
+import { Redis } from "@upstash/redis";
 
 /*
-ROOMS V2 — Classroom reale con round-robin writers
-- CORS per prod + preview Lovable
+ROOMS V2 — Persistent (Upstash Redis)
+- CORS prod + Lovable
 - JWT admin (Bearer)
-- Multi-room in RAM (demo)
-- Turni con NEXT / PAUSE / RESUME
-- Dashboard support: LIST_ROOMS + STOP_TURN
+- Multi-room persistent in Redis
+- Turni NEXT / PAUSE / RESUME / STOP
+- Dashboard: LIST_ROOMS (summary)
+- Versioning: version, updated_at
 */
+
+type RoomMode = "CONTINUA_TU" | "CAMPBELL" | "PROPP";
 
 type RoomState = {
   room_name: string;
   activity_title: string;
-  room_mode: "CONTINUA_TU" | "CAMPBELL" | "PROPP";
+  room_mode: RoomMode;
   prompt_seed: string;
   story_so_far: string;
 
   writers: string[];
   current_writer_index: number;
 
-  // Turn management
-  turn_ends_at: number | null; // timestamp ms quando finisce il turno (se attivo)
-  turn_paused: boolean; // true se in pausa
-  turn_remaining_ms: number | null; // ms residui salvati al momento della pausa
+  turn_ends_at: number | null;
+  turn_paused: boolean;
+  turn_remaining_ms: number | null;
 
+  // Robustness
+  version: number;       // incrementa a ogni modifica
+  updated_at: number;    // now()
+
+  // Safety TTL (paracadute)
+  expires_at: number;
+};
+
+type RoomSummary = {
+  room: string;
+  room_name: string;
+  activity_title: string;
+  room_mode: RoomMode;
+
+  writers_count: number;
+  current_writer: string | null;
+
+  turn_ends_at: number | null;
+  turn_paused: boolean;
+  turn_remaining_ms: number | null;
+
+  version: number;
+  updated_at: number;
   expires_at: number;
 };
 
@@ -59,9 +85,6 @@ function setCors(req: any, res: any) {
   res.setHeader("Access-Control-Max-Age", "86400");
 }
 
-const rooms = new Map<string, RoomState>();
-
-// ---------- Helpers ----------
 function now() {
   return Date.now();
 }
@@ -115,15 +138,67 @@ function verifyAdmin(req: NextApiRequest) {
   return true;
 }
 
+// ---------- Redis ----------
+const redis = Redis.fromEnv();
+
+// Keying
+const KEY_ROOM = (room: string) => `rooms:room:${room}`;
+const KEY_ROOMS_SET = `rooms:all`; // set con nomi stanza
+
+async function getRoom(room: string): Promise<RoomState | null> {
+  const st = await redis.get<RoomState>(KEY_ROOM(room));
+  if (!st) return null;
+  if (now() > st.expires_at) {
+    await redis.del(KEY_ROOM(room));
+    await redis.srem(KEY_ROOMS_SET, room);
+    return null;
+  }
+  return st;
+}
+
+async function saveRoom(room: string, st: RoomState) {
+  // TTL paracadute: fino a expires_at
+  const ttlSeconds = Math.max(60, Math.ceil((st.expires_at - now()) / 1000));
+  await redis.set(KEY_ROOM(room), st, { ex: ttlSeconds });
+  await redis.sadd(KEY_ROOMS_SET, room);
+}
+
+function toSummary(room: string, st: RoomState): RoomSummary {
+  const current_writer =
+    st.writers && st.writers.length > 0 ? st.writers[st.current_writer_index] : null;
+
+  return {
+    room,
+    room_name: st.room_name,
+    activity_title: st.activity_title,
+    room_mode: st.room_mode,
+
+    writers_count: st.writers?.length || 0,
+    current_writer,
+
+    turn_ends_at: st.turn_ends_at,
+    turn_paused: st.turn_paused,
+    turn_remaining_ms: st.turn_remaining_ms,
+
+    version: st.version,
+    updated_at: st.updated_at,
+    expires_at: st.expires_at,
+  };
+}
+
+function bump(st: RoomState) {
+  st.version = (st.version || 0) + 1;
+  st.updated_at = now();
+}
+
 // ---------- API ----------
-export default function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   setCors(req, res);
 
-  // Preflight
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).end();
 
-  // Parse body (safe)
+  // Parse body safe
   let body: any = req.body;
   if (typeof body === "string") {
     try {
@@ -136,98 +211,79 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const { action } = body || {};
   if (!action) return res.status(400).json({ error: "missing action" });
 
-  // -------- STATUS (ADMIN CHECK) --------
+  // STATUS
   if (action === "status") {
     if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
     return res.json({ success: true, ok: true, now: now() });
   }
 
-  // -------- LIST ROOMS (ADMIN) --------
+  // LIST ROOMS (summary)
   if (action === "list_rooms") {
     if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
 
-    // purge expired rooms
     const t = now();
-    for (const [k, st] of rooms.entries()) {
-      if (t > st.expires_at) rooms.delete(k);
+    const roomIds = (await redis.smembers<string[]>(KEY_ROOMS_SET)) || [];
+    const summaries: RoomSummary[] = [];
+
+    for (const room of roomIds) {
+      const st = await getRoom(room);
+      if (!st) continue;
+      summaries.push(toSummary(room, st));
     }
 
-    const out = Array.from(rooms.entries()).map(([room, room_state]) => ({
-      room,
-      room_state,
-    }));
+    // ordina per scadenza
+    summaries.sort((a, b) => (a.expires_at || 0) - (b.expires_at || 0));
 
-    // (opzionale) ordinamento: scadenza crescente
-    out.sort((a, b) => (a.room_state.expires_at || 0) - (b.room_state.expires_at || 0));
-
-    return res.json({ success: true, rooms: out, now: t });
+    return res.json({ success: true, rooms: summaries, now: t });
   }
 
-  // -------- STOP TURN (ADMIN) --------
-  if (action === "stop_turn") {
-    if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
-
-    const key = normalizeKey(body.room);
-    const st = rooms.get(key);
-    if (!st) return res.status(404).json({ error: "room not found" });
-
-    st.turn_ends_at = null;
-    st.turn_paused = false;
-    st.turn_remaining_ms = null;
-
-    return res.json({ success: true, room_state: st });
-  }
-
-  // -------- CREATE --------
+  // CREATE
   if (action === "create") {
     if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
 
-    const {
+    const room_name = normalizeKey(body.room_name) || randomId();
+    const activity_title = normalizeKey(body.activity_title) || room_name;
+    const room_mode: RoomMode = (body.room_mode as RoomMode) || "CONTINUA_TU";
+
+    // Paracadute: in ore (tu poi lo alzerai a 12–24h quando passi a “sessione SU” completa)
+    const ttl_h = clampNumber(body.ttl_h, 12, 1, 24);
+    const expires_at = now() + ttl_h * 3600 * 1000;
+
+    const st: RoomState = {
       room_name,
       activity_title,
-      room_mode = "CONTINUA_TU",
-      ttl_h = 4,
-    } = body;
-
-    const room = normalizeKey(room_name) || randomId();
-    const expires_at = now() + clampNumber(ttl_h, 4, 1, 24) * 3600 * 1000;
-
-    const activity_title_safe = normalizeKey(activity_title) || room;
-
-    rooms.set(room, {
-      room_name: room,
-      activity_title: activity_title_safe,
       room_mode,
       prompt_seed: "",
       story_so_far: "",
+
       writers: [],
       current_writer_index: 0,
+
       turn_ends_at: null,
       turn_paused: false,
       turn_remaining_ms: null,
-      expires_at,
-    });
 
-    return res.json({
-      success: true,
-      room,
+      version: 1,
+      updated_at: now(),
       expires_at,
-    });
+    };
+
+    await saveRoom(room_name, st);
+
+    return res.json({ success: true, room: room_name, expires_at });
   }
 
-  // -------- JOIN (writer enters) --------
+  // JOIN (NSU)
   if (action === "join") {
     const key = normalizeKey(body.room);
-    const st = rooms.get(key);
+    const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
-
-    if (now() > st.expires_at) {
-      rooms.delete(key);
-      return res.status(410).json({ error: "room expired" });
-    }
 
     const writer_id = `Writer ${st.writers.length + 1}`;
     st.writers.push(writer_id);
+
+    bump(st);
+    await saveRoom(key, st);
 
     return res.json({
       success: true,
@@ -237,65 +293,60 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     });
   }
 
-  // -------- NEXT TURN (SU) --------
+  // NEXT TURN (SU)
   if (action === "next_turn") {
     if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
 
     const key = normalizeKey(body.room);
-    const st = rooms.get(key);
+    const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
     if (!st.writers || st.writers.length === 0) {
       return res.status(409).json({ error: "no writers yet" });
     }
 
-    st.current_writer_index =
-      (st.current_writer_index + 1) % st.writers.length;
+    st.current_writer_index = (st.current_writer_index + 1) % st.writers.length;
 
-    // reset pause flags and start a new turn
     st.turn_paused = false;
     st.turn_remaining_ms = null;
 
     const turnSeconds = clampNumber(body.turn_s, 180, 15, 600);
     st.turn_ends_at = now() + turnSeconds * 1000;
 
+    bump(st);
+    await saveRoom(key, st);
+
     return res.json({ success: true, room_state: st });
   }
 
-  // -------- PAUSE TURN (SU) --------
+  // PAUSE TURN (SU)
   if (action === "pause_turn") {
     if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
 
     const key = normalizeKey(body.room);
-    const st = rooms.get(key);
+    const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
-    if (!st.writers || st.writers.length === 0) {
-      return res.status(409).json({ error: "no writers yet" });
-    }
-
-    if (st.turn_paused) {
-      return res.status(409).json({ error: "already paused" });
-    }
-
-    if (st.turn_ends_at == null) {
-      return res.status(409).json({ error: "no active turn" });
-    }
+    if (st.turn_paused) return res.status(409).json({ error: "already paused" });
+    if (st.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
 
     const remaining = Math.max(0, st.turn_ends_at - now());
     st.turn_paused = true;
     st.turn_remaining_ms = remaining;
     st.turn_ends_at = null;
 
+    bump(st);
+    await saveRoom(key, st);
+
     return res.json({ success: true, room_state: st });
   }
 
-  // -------- RESUME TURN (SU) --------
+  // RESUME TURN (SU)
   if (action === "resume_turn") {
     if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
 
     const key = normalizeKey(body.room);
-    const st = rooms.get(key);
+    const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
     if (!st.turn_paused || st.turn_remaining_ms == null) {
@@ -307,18 +358,37 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     st.turn_remaining_ms = null;
     st.turn_ends_at = now() + remaining;
 
+    bump(st);
+    await saveRoom(key, st);
+
     return res.json({ success: true, room_state: st });
   }
 
-  // -------- SUBMIT TEXT (NSU) --------
-  if (action === "submit_text") {
+  // STOP TURN (SU)
+  if (action === "stop_turn") {
+    if (!verifyAdmin(req)) return res.status(401).json({ error: "admin only" });
+
     const key = normalizeKey(body.room);
-    const st = rooms.get(key);
+    const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
-    if (st.turn_paused) {
-      return res.status(409).json({ error: "turn paused" });
-    }
+    st.turn_ends_at = null;
+    st.turn_paused = false;
+    st.turn_remaining_ms = null;
+
+    bump(st);
+    await saveRoom(key, st);
+
+    return res.json({ success: true, room_state: st });
+  }
+
+  // SUBMIT TEXT (NSU)
+  if (action === "submit_text") {
+    const key = normalizeKey(body.room);
+    const st = await getRoom(key);
+    if (!st) return res.status(404).json({ error: "room not found" });
+
+    if (st.turn_paused) return res.status(409).json({ error: "turn paused" });
 
     const writer_id = normalizeKey(body.writer_id);
     const current = st.writers[st.current_writer_index];
@@ -327,21 +397,23 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     }
 
     st.story_so_far += `\n${String(body.text || "")}`;
-    st.current_writer_index =
-      (st.current_writer_index + 1) % st.writers.length;
+    st.current_writer_index = (st.current_writer_index + 1) % st.writers.length;
 
-    // after submit, auto-start next writer turn (default 180s)
+    // auto-start next turn 180s
     st.turn_paused = false;
     st.turn_remaining_ms = null;
     st.turn_ends_at = now() + 180 * 1000;
 
+    bump(st);
+    await saveRoom(key, st);
+
     return res.json({ success: true, room_state: st });
   }
 
-  // -------- GET STATE (polling) --------
+  // GET STATE
   if (action === "get_state") {
     const key = normalizeKey(body.room);
-    const st = rooms.get(key);
+    const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
     return res.json({ success: true, room_state: st });

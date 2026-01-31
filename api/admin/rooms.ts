@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "crypto";
 import { Redis } from "@upstash/redis";
+export const config = { runtime: "nodejs" };
 
 /*
 ROOMS V2 — Persistent (Upstash Redis)

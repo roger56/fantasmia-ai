@@ -10,7 +10,6 @@ fantasmia/
 git/
 git/**
 *.py
-package-lock.json
 sketch.ts
 api/openai/login.ts
 /git

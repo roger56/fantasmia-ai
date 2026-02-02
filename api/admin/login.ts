@@ -5,7 +5,6 @@ import crypto from "crypto";
 
 type ApiOk = { success: true; token: string };
 type ApiErr = { error: string };
-
 type Body = { password?: string };
 
 // ✅ Lista origin ammessi (IMPORTANTISSIMO: con credentials non puoi usare "*")
@@ -23,31 +22,41 @@ const allowedOrigins: Array<string | RegExp> = [
 ];
 
 function isOriginAllowed(origin: string) {
-  return allowedOrigins.some((o) => (typeof o === "string" ? o === origin : o.test(origin)));
+  return allowedOrigins.some((o) =>
+    typeof o === "string" ? o === origin : o.test(origin)
+  );
 }
 
-function setCors(req: NextApiRequest, res: NextApiResponse) {
+/**
+ * CORS robusto:
+ * - Imposta SEMPRE i metodi/header di preflight
+ * - Se origin è ammesso, riflette l'origin e abilita credentials
+ * - Se origin assente (server-to-server), ok
+ */
+function applyCors(req: NextApiRequest, res: NextApiResponse) {
   const origin = (req.headers.origin || "").trim();
 
-  if (origin && isOriginAllowed(origin)) {
-    // Riflette l'origin reale, non "*"
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    // ✅ aggiunto Authorization (serve a Lovable e ad altre chiamate)
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Accept, X-Requested-With, Authorization"
-    );
-    // Evita cache “cross-origin” sbagliate
-    res.setHeader("Vary", "Origin");
-    return true;
+  // Sempre utili anche su errori / early returns
+  res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Accept, X-Requested-With, Authorization"
+  );
+  res.setHeader("Access-Control-Max-Age", "86400");
+
+  if (origin) {
+    if (isOriginAllowed(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Vary", "Origin");
+      return { ok: true, origin };
+    }
+    // Origin presente ma non ammesso
+    return { ok: false, origin };
   }
 
-  // Se non c'è origin (call server-to-server) puoi permettere
-  if (!origin) return true;
-
-  return false;
+  // Nessun Origin (curl, chiamate server-to-server) → ok
+  return { ok: true, origin: "" };
 }
 
 // helper base64url per oggetti JSON
@@ -58,17 +67,24 @@ const b64url = (obj: any) =>
     .replace(/\+/g, "-")
     .replace(/\//g, "_");
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiOk | ApiErr>) {
-  const corsOk = setCors(req, res);
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<ApiOk | ApiErr>
+) {
+  const cors = applyCors(req, res);
 
   // Preflight
   if (req.method === "OPTIONS") {
-    if (!corsOk) return res.status(403).json({ error: "CORS origin not allowed" });
+    if (!cors.ok) return res.status(403).json({ error: "CORS origin not allowed" });
     return res.status(204).end();
   }
 
-  if (!corsOk) return res.status(403).json({ error: "CORS origin not allowed" });
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  // Blocca origin non ammesso
+  if (!cors.ok) return res.status(403).json({ error: "CORS origin not allowed" });
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
 
   // Body parsing robusto
   let body: Body = {};
@@ -108,19 +124,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   const token = `${toSign}.${sig}`;
 
-  // ✅ Cookie JWT httpOnly (così puoi anche usarlo via cookie se serve)
+  // ✅ Cookie JWT httpOnly
   const isProd = process.env.NODE_ENV === "production";
   res.setHeader(
     "Set-Cookie",
     cookie.serialize("admin_jwt", token, {
       httpOnly: true,
-      secure: isProd,     // in prod true
-      sameSite: "none",   // come nel tuo allegato; richiede secure=true in prod
+      secure: isProd,      // in prod true
+      sameSite: "none",    // cross-site: richiede secure=true in prod
       path: "/",
-      maxAge: 60 * 60,    // 1h
+      maxAge: 60 * 60,     // 1h
     })
   );
 
-  // ✅ Risposta richiesta da Lovable
   return res.status(200).json({ success: true, token });
 }

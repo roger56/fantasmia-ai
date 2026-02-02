@@ -6,3 +6,4 @@ questi sono gli end point :
 - `/api/openai/poetry`
 - `/api/openai/image`
 -  `/api/openai/send_email`
+- 

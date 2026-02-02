@@ -7,11 +7,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "typecheck": "tsc --noEmit"
-  },
+  "build": "echo \"API only – no build\"",
+  "dev": "vercel dev"
+},
   "dependencies": {
     "@upstash/redis": "^1.36.1",
     "@vercel/node": "^5.5.28",

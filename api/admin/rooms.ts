@@ -247,6 +247,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: "invalid json body" });
     }
   }
+const corsOk = setCors(req, res);
+
+if (req.method === "OPTIONS") {
+  if (!corsOk) return res.status(403).json({ error: "CORS origin not allowed" });
+  return res.status(204).end();
+}
+
+if (!corsOk) {
+  return res.status(403).json({ error: "CORS origin not allowed" });
+}
 
   const { action } = body || {};
   if (!action) return res.status(400).json({ error: "missing action" });

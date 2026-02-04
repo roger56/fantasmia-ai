@@ -3,6 +3,45 @@ import crypto from "crypto";
 import { Redis } from "@upstash/redis";
 export const config = { runtime: "nodejs" };
 
+// ===== CORS (IDENTICO A login.ts) =====
+const allowedOrigins: Array<string | RegExp> = [
+  "https://fantasmia.it",
+  "https://www.fantasmia.it",
+  /^https:\/\/.*\.lovableproject\.com$/,
+  /^https:\/\/.*\.lovable\.app$/,
+  "https://lovable.app",
+  "https://www.lovable.app",
+  "https://lovable.dev",
+  /^https:\/\/.*\.lovable\.dev$/,
+  "http://localhost:5173",
+  "http://localhost:3000",
+];
+
+function isOriginAllowed(origin: string) {
+  return allowedOrigins.some((o) =>
+    typeof o === "string" ? o === origin : o.test(origin)
+  );
+}
+
+function setCors(req: any, res: any) {
+  const origin = (req.headers.origin || "").trim();
+
+  if (origin && isOriginAllowed(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Accept, X-Requested-With, Authorization"
+    );
+    res.setHeader("Vary", "Origin");
+    return true;
+  }
+
+  if (!origin) return true;
+  return false;
+}
+
 /*
 ROOMS V2 — Persistent (Upstash Redis)
 - CORS prod + Lovable

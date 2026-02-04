@@ -410,6 +410,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     return res.json({ success: true, room_state: st });
   }
+  // DELETE / CLOSE ROOM (admin)
+  if (action === "delete_room") {
+    if (!isAdmin) {
+      return res.status(401).json({ error: "admin required" });
+    }
+
+    const key = normalizeKey(body.room);
+    const st = await getRoom(key);
+    if (!st) {
+      // Se non esiste già, per il frontend è comunque OK
+      return res.status(404).json({ success: true });
+    }
+
+    const now = Date.now();
+
+    // Marca la stanza come scaduta
+    const updated = {
+      ...st,
+      expires_at: now - 1,
+      updated_at: now,
+      version: (st.version || 0) + 1,
+      turn_paused: true,
+      turn_ends_at: null,
+      turn_remaining_ms: null,
+    };
+
+    await setRoom(key, updated);
+
+    return res.json({ success: true });
+  }
 
   // GET STATE
   if (action === "get_state") {

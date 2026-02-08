@@ -274,6 +274,51 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     return res.json({ success: true, room_state: st });
   }
+  // ===== SUBMIT TEXT (NSU) =====
+  // Writer invia il contributo: salva testo e CHIUDE il turno.
+  // Il turno successivo NON parte da solo: lo avvia il SU con next_turn.
+  if (action === "submit_text") {
+    const key = normalizeKey(body.room);
+    const st = await getRoom(key);
+    if (!st) return res.status(404).json({ error: "room not found" });
+
+    // stanza scaduta (getRoom già ripulisce, ma teniamo una guardia)
+    if (now() > st.expires_at) return res.status(410).json({ error: "room expired" });
+
+    const writer_id = normalizeKey(body.writer_id);
+    if (!writer_id) return res.status(400).json({ error: "missing writer_id" });
+
+    // writer deve esistere nella stanza
+    const writerIndex = st.writers.indexOf(writer_id);
+    if (writerIndex < 0) return res.status(403).json({ error: "writer not in room" });
+
+    // deve essere il suo turno
+    const current = st.writers[st.current_writer_index];
+    if (writer_id !== current) return res.status(403).json({ error: "not your turn" });
+
+    // non deve essere in pausa
+    if (st.turn_paused) return res.status(409).json({ error: "turn paused" });
+
+    // deve esserci un turno attivo (turn_ends_at valorizzato e non scaduto)
+    if (st.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
+    if (st.turn_ends_at <= now()) return res.status(409).json({ error: "turn expired" });
+
+    const txt = String(body.text || "").trim();
+    if (!txt) return res.status(400).json({ error: "empty text" });
+
+    // Appendi il contributo alla storia
+    st.story_so_far = (st.story_so_far ? st.story_so_far + "\n" : "") + txt;
+
+    // CHIUDE il turno: niente auto-advance.
+    st.turn_ends_at = null;
+    st.turn_paused = false;
+    st.turn_remaining_ms = null;
+
+    bump(st);
+    await saveRoom(key, st);
+
+    return res.json({ success: true, room_state: st });
+  }
 
   // ===== DELETE ROOM =====
   if (action === "delete_room") {

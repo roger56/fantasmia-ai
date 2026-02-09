@@ -274,6 +274,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     return res.json({ success: true, room_state: st });
   }
+    // ===== RESUME TURN (SU) =====
+  // Riprende un turno in pausa ricalcolando turn_ends_at dal turn_remaining_ms
+  if (action === "resume_turn") {
+    if (!isAdmin) return res.status(401).json({ error: "admin only" });
+
+    const key = normalizeKey(body.room);
+    if (!key) return res.status(400).json({ error: "missing room" });
+
+    const st = await getRoom(key);
+    if (!st) return res.status(404).json({ error: "room not found" });
+
+    // Deve essere in pausa e avere remaining valorizzato
+    if (!st.turn_paused || st.turn_remaining_ms == null) {
+      return res.status(409).json({ error: "not paused" });
+    }
+
+    const remaining = Math.max(0, Number(st.turn_remaining_ms) || 0);
+    if (remaining <= 0) {
+      // se remaining è 0, consideriamo "nessun turno attivo" (o si può decidere di ripartire con default)
+      st.turn_paused = false;
+      st.turn_remaining_ms = null;
+      st.turn_ends_at = null;
+      bump(st);
+      await saveRoom(key, st);
+      return res.status(409).json({ error: "no remaining time" });
+    }
+
+    // Riprendi: turno non più in pausa, ends_at = now + remaining
+    st.turn_paused = false;
+    st.turn_ends_at = now() + remaining;
+    st.turn_remaining_ms = null;
+
+    bump(st);
+    await saveRoom(key, st);
+
+    return res.json({ success: true, room_state: st });
+  }
+
   // ===== SUBMIT TEXT (NSU) =====
   // Writer invia il contributo: salva testo e CHIUDE il turno.
   // Il turno successivo NON parte da solo: lo avvia il SU con next_turn.

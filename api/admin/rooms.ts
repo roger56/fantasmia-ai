@@ -1,4 +1,4 @@
-// API FUNZIONANTE + aggiunte: next_turn e pause_turn (solo queste 2)
+// API FUNZIONANTE + aggiunte: next_turn, pause_turn, resume_turn, submit_text + group_* (non-breaking)
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "crypto";
 import { Redis } from "@upstash/redis";
@@ -20,7 +20,9 @@ const allowedOrigins: Array<string | RegExp> = [
 ];
 
 function isOriginAllowed(origin: string) {
-  return allowedOrigins.some((o) => (typeof o === "string" ? o === origin : o.test(origin)));
+  return allowedOrigins.some((o) =>
+    typeof o === "string" ? o === origin : o.test(origin)
+  );
 }
 
 function setCors(req: NextApiRequest, res: NextApiResponse) {
@@ -108,7 +110,11 @@ function verifyAdmin(req: NextApiRequest) {
   const secret = process.env.ADMIN_JWT_SECRET;
   if (!secret) return false;
 
-  const check = crypto.createHmac("sha256", secret).update(`${h}.${p}`).digest("base64url");
+  const check = crypto
+    .createHmac("sha256", secret)
+    .update(`${h}.${p}`)
+    .digest("base64url");
+
   if (check !== s) return false;
 
   const payload = JSON.parse(Buffer.from(p, "base64url").toString());
@@ -151,6 +157,20 @@ function toSummary(room: string, st: RoomState): RoomSummary {
   };
 }
 
+// ===== GROUP HELPERS (SERVER-SIDE) =====
+type GroupResult = {
+  room: string;
+  ok: boolean;
+  status?: number;
+  error?: string;
+  room_state?: RoomState;
+};
+
+function parseRoomsArray(x: any): string[] {
+  if (Array.isArray(x)) return x.map((r) => normalizeKey(r)).filter(Boolean);
+  return [];
+}
+
 // ===== HANDLER =====
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   setCors(req, res);
@@ -161,7 +181,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const isAdmin = verifyAdmin(req);
 
   let body: any = req.body;
-  if (typeof body === "string") body = JSON.parse(body);
+  if (typeof body === "string") {
+    try {
+      body = JSON.parse(body);
+    } catch {
+      return res.status(400).json({ error: "invalid json body" });
+    }
+  }
+
   const { action } = body || {};
   if (!action) return res.status(400).json({ error: "missing action" });
 
@@ -274,8 +301,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     return res.json({ success: true, room_state: st });
   }
-    // ===== RESUME TURN (SU) =====
-  // Riprende un turno in pausa ricalcolando turn_ends_at dal turn_remaining_ms
+
+  // ===== RESUME TURN (SU) =====
   if (action === "resume_turn") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
@@ -285,14 +312,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
-    // Deve essere in pausa e avere remaining valorizzato
     if (!st.turn_paused || st.turn_remaining_ms == null) {
       return res.status(409).json({ error: "not paused" });
     }
 
     const remaining = Math.max(0, Number(st.turn_remaining_ms) || 0);
     if (remaining <= 0) {
-      // se remaining è 0, consideriamo "nessun turno attivo" (o si può decidere di ripartire con default)
       st.turn_paused = false;
       st.turn_remaining_ms = null;
       st.turn_ends_at = null;
@@ -301,7 +326,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(409).json({ error: "no remaining time" });
     }
 
-    // Riprendi: turno non più in pausa, ends_at = now + remaining
     st.turn_paused = false;
     st.turn_ends_at = now() + remaining;
     st.turn_remaining_ms = null;
@@ -313,41 +337,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // ===== SUBMIT TEXT (NSU) =====
-  // Writer invia il contributo: salva testo e CHIUDE il turno.
-  // Il turno successivo NON parte da solo: lo avvia il SU con next_turn.
   if (action === "submit_text") {
     const key = normalizeKey(body.room);
     const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
 
-    // stanza scaduta (getRoom già ripulisce, ma teniamo una guardia)
     if (now() > st.expires_at) return res.status(410).json({ error: "room expired" });
 
     const writer_id = normalizeKey(body.writer_id);
     if (!writer_id) return res.status(400).json({ error: "missing writer_id" });
 
-    // writer deve esistere nella stanza
     const writerIndex = st.writers.indexOf(writer_id);
     if (writerIndex < 0) return res.status(403).json({ error: "writer not in room" });
 
-    // deve essere il suo turno
     const current = st.writers[st.current_writer_index];
     if (writer_id !== current) return res.status(403).json({ error: "not your turn" });
 
-    // non deve essere in pausa
     if (st.turn_paused) return res.status(409).json({ error: "turn paused" });
 
-    // deve esserci un turno attivo (turn_ends_at valorizzato e non scaduto)
     if (st.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
     if (st.turn_ends_at <= now()) return res.status(409).json({ error: "turn expired" });
 
     const txt = String(body.text || "").trim();
     if (!txt) return res.status(400).json({ error: "empty text" });
 
-    // Appendi il contributo alla storia
     st.story_so_far = (st.story_so_far ? st.story_so_far + "\n" : "") + txt;
 
-    // CHIUDE il turno: niente auto-advance.
+    // chiude il turno: solo SU fa ripartire con next_turn
     st.turn_ends_at = null;
     st.turn_paused = false;
     st.turn_remaining_ms = null;
@@ -382,6 +398,179 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
     return res.json({ success: true, room_state: st });
+  }
+
+  // =========================================================
+  // ===== GROUP ACTIONS (NUOVE) — NON MODIFICANO LE AZIONI ESISTENTI
+  // =========================================================
+
+  // BODY atteso:
+  // { action:"group_next_turn", rooms:["a","b"], turn_s?:180 }
+  if (action === "group_next_turn") {
+    if (!isAdmin) return res.status(401).json({ error: "admin only" });
+
+    const rooms = parseRoomsArray(body.rooms);
+    if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
+
+    const turn_s = clampNumber(body.turn_s, 180, 15, 600);
+    const results: GroupResult[] = [];
+
+    for (const room of rooms) {
+      try {
+        const st = await getRoom(room);
+        if (!st) {
+          results.push({ room, ok: false, status: 404, error: "room not found" });
+          continue;
+        }
+        if (!st.writers || st.writers.length === 0) {
+          results.push({ room, ok: false, status: 409, error: "no writers yet" });
+          continue;
+        }
+
+        st.current_writer_index = (st.current_writer_index + 1) % st.writers.length;
+        st.turn_paused = false;
+        st.turn_remaining_ms = null;
+        st.turn_ends_at = now() + turn_s * 1000;
+
+        bump(st);
+        await saveRoom(room, st);
+
+        results.push({ room, ok: true, status: 200, room_state: st });
+      } catch (e: any) {
+        results.push({ room, ok: false, status: 500, error: e?.message || "error" });
+      }
+    }
+
+    const okAll = results.every((r) => r.ok);
+    return res.json({ success: okAll, results, now: now() });
+  }
+
+  // BODY:
+  // { action:"group_pause_turn", rooms:["a","b"] }
+  if (action === "group_pause_turn") {
+    if (!isAdmin) return res.status(401).json({ error: "admin only" });
+
+    const rooms = parseRoomsArray(body.rooms);
+    if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
+
+    const results: GroupResult[] = [];
+
+    for (const room of rooms) {
+      try {
+        const st = await getRoom(room);
+        if (!st) {
+          results.push({ room, ok: false, status: 404, error: "room not found" });
+          continue;
+        }
+
+        if (st.turn_paused) {
+          results.push({ room, ok: false, status: 409, error: "already paused" });
+          continue;
+        }
+        if (st.turn_ends_at == null) {
+          results.push({ room, ok: false, status: 409, error: "no active turn" });
+          continue;
+        }
+
+        const remaining = Math.max(0, st.turn_ends_at - now());
+        st.turn_paused = true;
+        st.turn_remaining_ms = remaining;
+        st.turn_ends_at = null;
+
+        bump(st);
+        await saveRoom(room, st);
+
+        results.push({ room, ok: true, status: 200, room_state: st });
+      } catch (e: any) {
+        results.push({ room, ok: false, status: 500, error: e?.message || "error" });
+      }
+    }
+
+    const okAll = results.every((r) => r.ok);
+    return res.json({ success: okAll, results, now: now() });
+  }
+
+  // BODY:
+  // { action:"group_resume_turn", rooms:["a","b"] }
+  if (action === "group_resume_turn") {
+    if (!isAdmin) return res.status(401).json({ error: "admin only" });
+
+    const rooms = parseRoomsArray(body.rooms);
+    if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
+
+    const results: GroupResult[] = [];
+
+    for (const room of rooms) {
+      try {
+        const st = await getRoom(room);
+        if (!st) {
+          results.push({ room, ok: false, status: 404, error: "room not found" });
+          continue;
+        }
+
+        if (!st.turn_paused || st.turn_remaining_ms == null) {
+          results.push({ room, ok: false, status: 409, error: "not paused" });
+          continue;
+        }
+
+        const remaining = Math.max(0, Number(st.turn_remaining_ms) || 0);
+        if (remaining <= 0) {
+          results.push({ room, ok: false, status: 409, error: "no remaining time" });
+          continue;
+        }
+
+        st.turn_paused = false;
+        st.turn_ends_at = now() + remaining;
+        st.turn_remaining_ms = null;
+
+        bump(st);
+        await saveRoom(room, st);
+
+        results.push({ room, ok: true, status: 200, room_state: st });
+      } catch (e: any) {
+        results.push({ room, ok: false, status: 500, error: e?.message || "error" });
+      }
+    }
+
+    const okAll = results.every((r) => r.ok);
+    return res.json({ success: okAll, results, now: now() });
+  }
+
+  // BODY:
+  // { action:"group_delete_room", rooms:["a","b"] }
+  if (action === "group_delete_room") {
+    if (!isAdmin) return res.status(401).json({ error: "admin only" });
+
+    const rooms = parseRoomsArray(body.rooms);
+    if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
+
+    const results: GroupResult[] = [];
+
+    for (const room of rooms) {
+      try {
+        const st = await getRoom(room);
+        if (!st) {
+          // per frontend ok comunque
+          results.push({ room, ok: true, status: 200 });
+          continue;
+        }
+
+        st.expires_at = now() - 1;
+        st.turn_paused = true;
+        st.turn_ends_at = null;
+        st.turn_remaining_ms = null;
+        bump(st);
+
+        await saveRoom(room, st);
+
+        results.push({ room, ok: true, status: 200 });
+      } catch (e: any) {
+        results.push({ room, ok: false, status: 500, error: e?.message || "error" });
+      }
+    }
+
+    const okAll = results.every((r) => r.ok);
+    return res.json({ success: okAll, results, now: now() });
   }
 
   return res.status(400).json({ error: "unknown action" });

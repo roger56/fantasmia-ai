@@ -1,3 +1,4 @@
+export const config = { runtime: "nodejs" };
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "crypto";
 import { Redis } from "@upstash/redis";

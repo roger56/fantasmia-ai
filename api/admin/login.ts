@@ -441,12 +441,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     // aggiorna last login
     await redis.set(KEY_NSU(suName, nsuId), { ...stored, last_login: Date.now() });
-console.log("[nsu_login] ok", {
-  su_name: suName,
-  nsu_id: nsuId,
-  role: "NSU",
-  hub_url: hubUrlValueHere, // la tua variabile
-});
+
     return res
       .status(200)
       .json({ success: true, su_name: suName, nsu_id: nsuId, display_name: stored.display_name, token, role: "NSU" });

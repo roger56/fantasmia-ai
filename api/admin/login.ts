@@ -397,55 +397,66 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(200).json({ success: true, token: "", role: "SUPERUSER" });
   }
 
-  // ======================================
-  // ACTION: nsu_login (NSU)
-  // ======================================
-  if (body?.action === "nsu_login") {
-    const suName = normalizeSuName(body.su_name);
-    const nsuId = normalizeNsuId(body.nsu_id);
-    const pin = normalizePin4(body.nsu_pin);
+  // 
+    // ======================================
+// ACTION: nsu_login (NSU)
+// ======================================
+if (body?.action === "nsu_login") {
+  const suName = normalizeSuName(body.su_name);
+  const nsuId = normalizeNsuId(body.nsu_id);
+  const pin = normalizePin4(body.nsu_pin);
 
-    if (!suName) return res.status(400).json({ error: "missing su_name" });
-    if (!nsuId) return res.status(400).json({ error: "missing/invalid nsu_id" });
-    if (!pin) return res.status(400).json({ error: "missing/invalid nsu_pin (must be 4 digits)" });
+  if (!suName) return res.status(400).json({ error: "missing su_name" });
+  if (!nsuId) return res.status(400).json({ error: "missing/invalid nsu_id" });
+  if (!pin) return res.status(400).json({ error: "missing/invalid nsu_pin (must be 4 digits)" });
 
-    const stored = await redis.get<any>(KEY_NSU(suName, nsuId));
-    if (!stored?.hash_hex || !stored?.salt_hex) return res.status(401).json({ error: "Invalid credentials" });
+  const stored = await redis.get<any>(KEY_NSU(suName, nsuId));
+  if (!stored?.hash_hex || !stored?.salt_hex) return res.status(401).json({ error: "Invalid credentials" });
 
-    const enabled = stored.enabled === 1 || stored.enabled === "1" || stored.enabled === true;
-    if (!enabled) return res.status(403).json({ error: "NSU disabled" });
+  const enabled = stored.enabled === 1 || stored.enabled === "1" || stored.enabled === true;
+  if (!enabled) return res.status(403).json({ error: "NSU disabled" });
 
-    const check = hashPasswordPBKDF2(pin, stored.salt_hex);
-    const ok = timingSafeEqualHex(check.hash_hex, stored.hash_hex);
-    if (!ok) return res.status(401).json({ error: "Invalid credentials" });
+  const check = hashPasswordPBKDF2(pin, stored.salt_hex);
+  const ok = timingSafeEqualHex(check.hash_hex, stored.hash_hex);
+  if (!ok) return res.status(401).json({ error: "Invalid credentials" });
 
-    const jwtSecret = process.env.ADMIN_JWT_SECRET;
-    if (!jwtSecret) return res.status(500).json({ error: "Missing ADMIN_JWT_SECRET" });
+  const jwtSecret = process.env.ADMIN_JWT_SECRET;
+  if (!jwtSecret) return res.status(500).json({ error: "Missing ADMIN_JWT_SECRET" });
 
-    const nowSec = Math.floor(Date.now() / 1000);
-    const exp = nowSec + 60 * 60; // 1h
+  const nowSec = Math.floor(Date.now() / 1000);
+  const exp = nowSec + 60 * 60; // 1h
 
-    const token = signJwt({ role: "NSU", su_name: suName, nsu_id: nsuId, iat: nowSec, exp }, jwtSecret);
+  const token = signJwt({ role: "NSU", su_name: suName, nsu_id: nsuId, iat: nowSec, exp }, jwtSecret);
 
-    // Cookie NSU (se ti serve lato browser)
-    res.setHeader(
-      "Set-Cookie",
-      cookie.serialize("nsu_jwt", token, {
-        httpOnly: true,
-        secure: isProd,
-        sameSite: "none",
-        path: "/",
-        maxAge: 60 * 60,
-      })
-    );
+  // Cookie NSU (se ti serve lato browser)
+  res.setHeader(
+    "Set-Cookie",
+    cookie.serialize("nsu_jwt", token, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: "none",
+      path: "/",
+      maxAge: 60 * 60,
+    })
+  );
 
-    // aggiorna last login
-    await redis.set(KEY_NSU(suName, nsuId), { ...stored, last_login: Date.now() });
+  // aggiorna last login
+  await redis.set(KEY_NSU(suName, nsuId), { ...stored, last_login: Date.now() });
 
-    return res
-      .status(200)
-      .json({ success: true, su_name: suName, nsu_id: nsuId, display_name: stored.display_name, token, role: "NSU" });
-  }
+  // >>> PATCH START: hub_url in response (no new API)
+  const hub_url = stored?.hub_url || process.env.DEFAULT_HUB_URL || undefined;
+  // <<< PATCH END
+
+  return res.status(200).json({
+    success: true,
+    su_name: suName,
+    nsu_id: nsuId,
+    display_name: stored.display_name,
+    token,
+    role: "NSU",
+    ...(hub_url ? { hub_url } : {}),
+  });
+}
 
   // =========================
   // Legacy: ADMIN login (come prima)

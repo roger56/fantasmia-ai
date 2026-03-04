@@ -5,24 +5,24 @@ import crypto from "crypto";
 import { Redis } from "@upstash/redis";
 
 type ApiOk =
-  | { success: true; token: string; role?: "ADMIN" | "SUPERUSER" | "NSU" }
+  | { success: true; token: string; role?: "ADMIN" | "SUPERUSER" | "NSU"; hub_url?: string; su_name?: string }
   | { success: true; items: any[] }
-  | { success: true; su_name: string; nsu_id: string; display_name?: string; token: string; role: "NSU" };
+  | { success: true; su_name: string; nsu_id: string; display_name?: string; token: string; role: "NSU"; hub_url?: string };
 
 type ApiErr = { error: string };
 
 type Body =
   | { password?: string; action?: undefined } // legacy ADMIN login
-  | { action: "su_create"; su_name?: string; su_password?: string }
+  | { action: "su_create"; su_name?: string; su_password?: string; hub_url?: string } // (optional hub_url)
   | { action: "su_login"; su_name?: string; su_password?: string }
-  // ===== NSU (nuovo) =====
-  | { action: "nsu_create"; nsu_id?: string; nsu_pin?: string; display_name?: string }
+  // ===== NSU =====
+  | { action: "nsu_create"; nsu_id?: string; nsu_pin?: string; display_name?: string; hub_url?: string } // (optional hub_url)
   | { action: "nsu_list" }
   | { action: "nsu_disable"; nsu_id?: string; enabled?: boolean }
   | { action: "nsu_reset_pin"; nsu_id?: string; nsu_pin?: string }
   | { action: "nsu_login"; su_name?: string; nsu_id?: string; nsu_pin?: string };
 
-// ✅ Lista origin ammessi (IMPORTANTISSIMO: con credentials non puoi usare "*")
+// ✅ Allowed origins (with credentials you can't use "*")
 const allowedOrigins: Array<string | RegExp> = [
   "https://fantasmia.it",
   "https://www.fantasmia.it",
@@ -41,10 +41,10 @@ function isOriginAllowed(origin: string) {
 }
 
 /**
- * CORS robusto:
- * - Imposta SEMPRE i metodi/header di preflight
- * - Se origin è ammesso, riflette l'origin e abilita credentials
- * - Se origin assente (server-to-server), ok
+ * Robust CORS:
+ * - Always set preflight method/headers
+ * - Reflect allowed Origin and enable credentials
+ * - If Origin absent (server-to-server), ok
  */
 function applyCors(req: NextApiRequest, res: NextApiResponse) {
   const origin = (req.headers.origin || "").trim();
@@ -66,7 +66,7 @@ function applyCors(req: NextApiRequest, res: NextApiResponse) {
   return { ok: true, origin: "" };
 }
 
-// helper base64url per oggetti JSON
+// helper base64url for JSON objects
 const b64url = (obj: any) =>
   Buffer.from(JSON.stringify(obj))
     .toString("base64")
@@ -95,12 +95,12 @@ const KEY_SU = (suName: string) => `auth:su:${suName}`;
 const KEY_NSU = (suName: string, nsuId: string) => `auth:nsu:${suName}:${nsuId}`;
 const KEY_NSU_LIST = (suName: string) => `auth:nsu_list:${suName}`;
 
-// Normalizzazione nome SU: coerente e “verificabile”
+// Normalize SU name
 function normalizeSuName(x: any) {
   return String(x || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-// Normalizzazione nsu_id: semplice, sicura, corta
+// Normalize nsu_id
 function normalizeNsuId(x: any) {
   return String(x || "")
     .trim()
@@ -110,14 +110,14 @@ function normalizeNsuId(x: any) {
     .slice(0, 40);
 }
 
-// PIN 4 cifre
+// PIN 4 digits
 function normalizePin4(x: any) {
   const s = String(x || "").trim();
   if (!/^\d{4}$/.test(s)) return "";
   return s;
 }
 
-// Password hashing (PBKDF2) → robusto e semplice
+// Password hashing (PBKDF2)
 function hashPasswordPBKDF2(plain: string, saltHex?: string) {
   const salt = saltHex ? Buffer.from(saltHex, "hex") : crypto.randomBytes(16);
   const iterations = 120_000;
@@ -141,7 +141,7 @@ function timingSafeEqualHex(aHex: string, bHex: string) {
   return crypto.timingSafeEqual(a, b);
 }
 
-// Verifica token ADMIN (stessa logica di rooms)
+// Verify ADMIN token (Bearer)
 function verifyAdminBearer(req: NextApiRequest): boolean {
   const auth = (req.headers.authorization || "").trim();
   if (!auth.startsWith("Bearer ")) return false;
@@ -170,7 +170,7 @@ function verifyAdminBearer(req: NextApiRequest): boolean {
   return true;
 }
 
-// Verifica token SUPERUSER e ritorna su_name
+// Verify SUPERUSER token and return su_name
 function verifySuBearer(req: NextApiRequest): { ok: boolean; su_name?: string } {
   const auth = (req.headers.authorization || "").trim();
   if (!auth.startsWith("Bearer ")) return { ok: false };
@@ -202,6 +202,16 @@ function verifySuBearer(req: NextApiRequest): { ok: boolean; su_name?: string } 
   return { ok: true, su_name: suName };
 }
 
+/**
+ * Resolve hub_url for responses.
+ * Priority:
+ * 1) record.hub_url (per-SU / per-NSU)
+ * 2) env DEFAULT_HUB_URL (manual/static)
+ */
+function resolveHubUrl(record: any): string | undefined {
+  return record?.hub_url || process.env.DEFAULT_HUB_URL || undefined;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiOk | ApiErr>) {
   const cors = applyCors(req, res);
 
@@ -214,7 +224,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   if (!cors.ok) return res.status(403).json({ error: "CORS origin not allowed" });
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  // Body parsing robusto
+  // Robust body parsing
   let body: Body | any = {};
   try {
     body = (typeof req.body === "string" ? JSON.parse(req.body) : req.body ?? {}) as Body;
@@ -232,6 +242,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const suName = normalizeSuName(body.su_name);
     const suPass = String(body.su_password || "").trim();
+    const hub_url_in = String(body.hub_url || "").trim(); // optional
 
     if (!suName) return res.status(400).json({ error: "missing su_name" });
     if (!suPass) return res.status(400).json({ error: "missing su_password" });
@@ -239,8 +250,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const rec = hashPasswordPBKDF2(suPass);
     const now = Date.now();
 
-    await redis.set(KEY_SU(suName), { su_name: suName, ...rec, updated_at: now });
+    // If hub_url provided, store it in SU record; else keep previous (if any)
+    const prev = await redis.get<any>(KEY_SU(suName));
+    const hub_url = hub_url_in || prev?.hub_url || undefined;
 
+    await redis.set(KEY_SU(suName), { su_name: suName, ...rec, updated_at: now, ...(hub_url ? { hub_url } : {}) });
+
+    // Keep legacy response shape (no breaking changes)
     return res.status(200).json({ success: true, token: "", role: "ADMIN" });
   }
 
@@ -280,7 +296,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       })
     );
 
-    return res.status(200).json({ success: true, token, role: "SUPERUSER" });
+    const hub_url = resolveHubUrl(stored);
+
+    return res.status(200).json({
+      success: true,
+      token,
+      role: "SUPERUSER",
+      su_name: suName,
+      ...(hub_url ? { hub_url } : {}),
+    });
   }
 
   // ======================================
@@ -298,6 +322,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (!nsuId) return res.status(400).json({ error: "missing/invalid nsu_id" });
     if (!pin) return res.status(400).json({ error: "missing/invalid nsu_pin (must be 4 digits)" });
 
+    // Allow override from request, else inherit from SU record, else env default
+    const suStored = await redis.get<any>(KEY_SU(suName));
+    const hub_url_in = String(body.hub_url || "").trim(); // optional
+    const hub_url = hub_url_in || resolveHubUrl(suStored);
+
     const now = Date.now();
     const rec = hashPasswordPBKDF2(pin);
 
@@ -310,6 +339,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       ...rec,
       created_at: now,
       updated_at: now,
+      ...(hub_url ? { hub_url } : {}),
     });
 
     await redis.sadd(KEY_NSU_LIST(suName), nsuId);
@@ -340,7 +370,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
 
-    // ordinamento: enabled desc, poi nome
+    // Sort: enabled desc, then name
     items.sort((a, b) => {
       const ea = a.enabled ? 1 : 0;
       const eb = b.enabled ? 1 : 0;
@@ -397,69 +427,66 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(200).json({ success: true, token: "", role: "SUPERUSER" });
   }
 
-  // 
-    // ======================================
-// ACTION: nsu_login (NSU)
-// ======================================
-if (body?.action === "nsu_login") {
-  const suName = normalizeSuName(body.su_name);
-  const nsuId = normalizeNsuId(body.nsu_id);
-  const pin = normalizePin4(body.nsu_pin);
+  // ======================================
+  // ACTION: nsu_login (NSU)
+  // ======================================
+  if (body?.action === "nsu_login") {
+    const suName = normalizeSuName(body.su_name);
+    const nsuId = normalizeNsuId(body.nsu_id);
+    const pin = normalizePin4(body.nsu_pin);
 
-  if (!suName) return res.status(400).json({ error: "missing su_name" });
-  if (!nsuId) return res.status(400).json({ error: "missing/invalid nsu_id" });
-  if (!pin) return res.status(400).json({ error: "missing/invalid nsu_pin (must be 4 digits)" });
+    if (!suName) return res.status(400).json({ error: "missing su_name" });
+    if (!nsuId) return res.status(400).json({ error: "missing/invalid nsu_id" });
+    if (!pin) return res.status(400).json({ error: "missing/invalid nsu_pin (must be 4 digits)" });
 
-  const stored = await redis.get<any>(KEY_NSU(suName, nsuId));
-  if (!stored?.hash_hex || !stored?.salt_hex) return res.status(401).json({ error: "Invalid credentials" });
+    const stored = await redis.get<any>(KEY_NSU(suName, nsuId));
+    if (!stored?.hash_hex || !stored?.salt_hex) return res.status(401).json({ error: "Invalid credentials" });
 
-  const enabled = stored.enabled === 1 || stored.enabled === "1" || stored.enabled === true;
-  if (!enabled) return res.status(403).json({ error: "NSU disabled" });
+    const enabled = stored.enabled === 1 || stored.enabled === "1" || stored.enabled === true;
+    if (!enabled) return res.status(403).json({ error: "NSU disabled" });
 
-  const check = hashPasswordPBKDF2(pin, stored.salt_hex);
-  const ok = timingSafeEqualHex(check.hash_hex, stored.hash_hex);
-  if (!ok) return res.status(401).json({ error: "Invalid credentials" });
+    const check = hashPasswordPBKDF2(pin, stored.salt_hex);
+    const ok = timingSafeEqualHex(check.hash_hex, stored.hash_hex);
+    if (!ok) return res.status(401).json({ error: "Invalid credentials" });
 
-  const jwtSecret = process.env.ADMIN_JWT_SECRET;
-  if (!jwtSecret) return res.status(500).json({ error: "Missing ADMIN_JWT_SECRET" });
+    const jwtSecret = process.env.ADMIN_JWT_SECRET;
+    if (!jwtSecret) return res.status(500).json({ error: "Missing ADMIN_JWT_SECRET" });
 
-  const nowSec = Math.floor(Date.now() / 1000);
-  const exp = nowSec + 60 * 60; // 1h
+    const nowSec = Math.floor(Date.now() / 1000);
+    const exp = nowSec + 60 * 60; // 1h
 
-  const token = signJwt({ role: "NSU", su_name: suName, nsu_id: nsuId, iat: nowSec, exp }, jwtSecret);
+    const token = signJwt({ role: "NSU", su_name: suName, nsu_id: nsuId, iat: nowSec, exp }, jwtSecret);
 
-  // Cookie NSU (se ti serve lato browser)
-  res.setHeader(
-    "Set-Cookie",
-    cookie.serialize("nsu_jwt", token, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: "none",
-      path: "/",
-      maxAge: 60 * 60,
-    })
-  );
+    // Cookie NSU (optional)
+    res.setHeader(
+      "Set-Cookie",
+      cookie.serialize("nsu_jwt", token, {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: "none",
+        path: "/",
+        maxAge: 60 * 60,
+      })
+    );
 
-  // aggiorna last login
-  await redis.set(KEY_NSU(suName, nsuId), { ...stored, last_login: Date.now() });
+    // update last login
+    await redis.set(KEY_NSU(suName, nsuId), { ...stored, last_login: Date.now() });
 
-  // >>> PATCH START: hub_url in response (no new API)
-  const hub_url = stored?.hub_url || process.env.DEFAULT_HUB_URL || undefined;
-  // <<< PATCH END
+    const hub_url = resolveHubUrl(stored);
 
-  return res.status(200).json({
-    success: true,
-    su_name: suName,
-    nsu_id: nsuId,
-    display_name: stored.display_name,
-    token,
-    role: "NSU",
-    ...(hub_url ? { hub_url } : {}),
-  });
-}
+    return res.status(200).json({
+      success: true,
+      su_name: suName,
+      nsu_id: nsuId,
+      display_name: stored.display_name,
+      token,
+      role: "NSU",
+      ...(hub_url ? { hub_url } : {}),
+    });
+  }
 
   // =========================
-  // Legacy: ADMIN login (come prima)
+  // Legacy: ADMIN login (as before)
   // =========================
   const password = String(body?.password ?? "").trim();
   if (!password) return res.status(400).json({ error: "Missing password" });
@@ -486,5 +513,8 @@ if (body?.action === "nsu_login") {
     })
   );
 
-  return res.status(200).json({ success: true, token, role: "ADMIN" });
+  // Include DEFAULT_HUB_URL optionally for admin debug (harmless)
+  const hub_url = process.env.DEFAULT_HUB_URL || undefined;
+
+  return res.status(200).json({ success: true, token, role: "ADMIN", ...(hub_url ? { hub_url } : {}) });
 }

@@ -1,4 +1,40 @@
 // API FUNZIONANTE + aggiunte: next_turn, pause_turn, resume_turn, submit_text + group_* (non-breaking)
+/*
+ * Scopo del file
+ *
+ * Questo endpoint server-side Vercel gestisce le “stanze” collaborative
+ * di Fantasmia, usate per attività di scrittura a turni tra più partecipanti.
+ *
+ * Il file espone una API POST unica che riceve nel body un campo `action`
+ * e, in base al valore ricevuto, permette di:
+ *
+ * - creare una nuova stanza;
+ * - elencare le stanze attive;
+ * - far entrare un partecipante nella stanza;
+ * - leggere lo stato corrente della stanza;
+ * - gestire il turno di scrittura corrente;
+ * - avviare il turno successivo;
+ * - mettere in pausa o riprendere un turno;
+ * - inviare il testo scritto dal partecipante di turno;
+ * - eliminare logicamente una stanza;
+ * - applicare alcune azioni in modo collettivo su più stanze tramite
+ *   le funzioni `group_*`.
+ *
+ * I dati delle stanze vengono salvati su Upstash Redis, con scadenza
+ * temporale basata su TTL, così da eliminare automaticamente le stanze
+ * non più valide.
+ *
+ * L’accesso alle funzioni amministrative è protetto tramite JWT firmato
+ * con la variabile ambiente `ADMIN_JWT_SECRET`.
+ *
+ * Il file gestisce anche gli header CORS per consentire chiamate dal dominio
+ * ufficiale fantasmia.it, dagli ambienti Lovable e dagli ambienti locali
+ * di sviluppo.
+ *
+ * Nota importante:
+ * questo commento descrive il funzionamento del modulo ma non modifica
+ * in alcun modo la logica del programma.
+ */
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "crypto";
 import { Redis } from "@upstash/redis";

@@ -1,47 +1,17 @@
-// API FUNZIONANTE + aggiunte: next_turn, pause_turn, resume_turn, submit_text + group_* (non-breaking)
-/*
- * Scopo del file
- *
- * Questo endpoint server-side Vercel gestisce le “stanze” collaborative
- * di Fantasmia, usate per attività di scrittura a turni tra più partecipanti.
- *
- * Il file espone una API POST unica che riceve nel body un campo `action`
- * e, in base al valore ricevuto, permette di:
- *
- * - creare una nuova stanza;
- * - elencare le stanze attive;
- * - far entrare un partecipante nella stanza;
- * - leggere lo stato corrente della stanza;
- * - gestire il turno di scrittura corrente;
- * - avviare il turno successivo;
- * - mettere in pausa o riprendere un turno;
- * - inviare il testo scritto dal partecipante di turno;
- * - eliminare logicamente una stanza;
- * - applicare alcune azioni in modo collettivo su più stanze tramite
- *   le funzioni `group_*`.
- *
- * I dati delle stanze vengono salvati su Upstash Redis, con scadenza
- * temporale basata su TTL, così da eliminare automaticamente le stanze
- * non più valide.
- *
- * L’accesso alle funzioni amministrative è protetto tramite JWT firmato
- * con la variabile ambiente `ADMIN_JWT_SECRET`.
- *
- * Il file gestisce anche gli header CORS per consentire chiamate dal dominio
- * ufficiale fantasmia.it, dagli ambienti Lovable e dagli ambienti locali
- * di sviluppo.
- *
- * Nota importante:
- * questo commento descrive il funzionamento del modulo ma non modifica
- * in alcun modo la logica del programma.
- */
+// API rooms.ts — versione con supporto Gruppi V2 (round-robin server-side)
+// Retrocompatibile: tutte le azioni esistenti restano invariate.
+//
+// Nuove azioni gruppo (V2):
+//   create_group, list_groups, group_state, join_group, get_my_assignment,
+//   group_advance_turn, group_pause, group_resume, group_submit_text, delete_group
+
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "crypto";
 import { Redis } from "@upstash/redis";
 
 export const config = { runtime: "nodejs" };
 
-// ===== CORS (UNA SOLA VOLTA, IDENTICO A login.ts) =====
+// ===== CORS =====
 const allowedOrigins: Array<string | RegExp> = [
   "https://fantasmia.it",
   "https://www.fantasmia.it",
@@ -63,7 +33,6 @@ function isOriginAllowed(origin: string) {
 
 function setCors(req: NextApiRequest, res: NextApiResponse) {
   const origin = (req.headers.origin || "").trim();
-
   if (origin && isOriginAllowed(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -85,17 +54,17 @@ type RoomState = {
   room_mode: RoomMode;
   prompt_seed: string;
   story_so_far: string;
-
   writers: string[];
   current_writer_index: number;
-
   turn_ends_at: number | null;
   turn_paused: boolean;
   turn_remaining_ms: number | null;
-
   version: number;
   updated_at: number;
   expires_at: number;
+  // V2 (opzionale): se la stanza appartiene a un gruppo
+  group_id?: string | null;
+  room_index?: number | null; // 0..N-1 dentro il gruppo
 };
 
 type RoomSummary = {
@@ -111,6 +80,26 @@ type RoomSummary = {
   version: number;
   updated_at: number;
   expires_at: number;
+  group_id?: string | null;
+};
+
+// V2: gruppo
+type GroupState = {
+  group_id: string;
+  activity_title: string;
+  room_mode: RoomMode;
+  prompt_seed: string;
+  expected_writers: number;       // N (cap rigido)
+  rooms: string[];                // N nomi stanze pre-create
+  writers: string[];              // ordinati per ordine di join, max N
+  turn_number: number;            // 0 = nessun turno avviato; 1, 2, ... = turno corrente
+  turn_ends_at: number | null;
+  turn_paused: boolean;
+  turn_remaining_ms: number | null;
+  version: number;
+  created_at: number;
+  updated_at: number;
+  expires_at: number;
 };
 
 // ===== UTILS =====
@@ -118,6 +107,9 @@ const redis = Redis.fromEnv();
 
 const KEY_ROOM = (room: string) => `rooms:room:${room}`;
 const KEY_ROOMS_SET = `rooms:all`;
+
+const KEY_GROUP = (gid: string) => `groups:group:${gid}`;
+const KEY_GROUPS_SET = `groups:all`;
 
 const now = () => Date.now();
 const normalizeKey = (x: any) => (x ? String(x).trim() : "");
@@ -129,7 +121,7 @@ const clampNumber = (x: any, fallback: number, min?: number, max?: number) => {
   return n;
 };
 
-function bump(st: RoomState) {
+function bump(st: RoomState | GroupState) {
   st.version = (st.version || 0) + 1;
   st.updated_at = now();
 }
@@ -138,30 +130,21 @@ function bump(st: RoomState) {
 function verifyAdmin(req: NextApiRequest) {
   const auth = (req.headers.authorization || "").trim();
   if (!auth.startsWith("Bearer ")) return false;
-
   const token = auth.slice(7);
   const [h, p, s] = token.split(".");
   if (!h || !p || !s) return false;
-
   const secret = process.env.ADMIN_JWT_SECRET;
   if (!secret) return false;
-
-  const check = crypto
-    .createHmac("sha256", secret)
-    .update(`${h}.${p}`)
-    .digest("base64url");
-
+  const check = crypto.createHmac("sha256", secret).update(`${h}.${p}`).digest("base64url");
   if (check !== s) return false;
-
   const payload = JSON.parse(Buffer.from(p, "base64url").toString());
   return payload.role === "ADMIN" && payload.exp * 1000 > now();
 }
 
-// ===== REDIS HELPERS =====
+// ===== REDIS HELPERS — ROOMS =====
 async function getRoom(room: string): Promise<RoomState | null> {
   const st = await redis.get<RoomState>(KEY_ROOM(room));
   if (!st) return null;
-
   if (now() > st.expires_at) {
     await redis.del(KEY_ROOM(room));
     await redis.srem(KEY_ROOMS_SET, room);
@@ -190,10 +173,45 @@ function toSummary(room: string, st: RoomState): RoomSummary {
     version: st.version,
     updated_at: st.updated_at,
     expires_at: st.expires_at,
+    group_id: st.group_id || null,
   };
 }
 
-// ===== GROUP HELPERS (SERVER-SIDE) =====
+// ===== REDIS HELPERS — GROUPS =====
+async function getGroup(gid: string): Promise<GroupState | null> {
+  const g = await redis.get<GroupState>(KEY_GROUP(gid));
+  if (!g) return null;
+  if (now() > g.expires_at) {
+    await redis.del(KEY_GROUP(gid));
+    await redis.srem(KEY_GROUPS_SET, gid);
+    return null;
+  }
+  return g;
+}
+
+async function saveGroup(g: GroupState) {
+  const ttlSeconds = Math.max(60, Math.ceil((g.expires_at - now()) / 1000));
+  await redis.set(KEY_GROUP(g.group_id), g, { ex: ttlSeconds });
+  await redis.sadd(KEY_GROUPS_SET, g.group_id);
+}
+
+// Calcola: per ogni writer i (0..N-1) e turno corrente, quale stanza ha assegnata.
+// Round-robin: roomIndex = (i + (turn_number - 1)) mod N
+// turn_number = 0 → nessun turno avviato → nessuna assegnazione
+function computeAssignments(g: GroupState): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  if (g.turn_number <= 0) {
+    for (const w of g.writers) out[w] = null;
+    return out;
+  }
+  const N = g.rooms.length;
+  g.writers.forEach((w, i) => {
+    const roomIdx = (i + (g.turn_number - 1)) % N;
+    out[w] = g.rooms[roomIdx];
+  });
+  return out;
+}
+
 type GroupResult = {
   room: string;
   ok: boolean;
@@ -218,44 +236,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   let body: any = req.body;
   if (typeof body === "string") {
-    try {
-      body = JSON.parse(body);
-    } catch {
-      return res.status(400).json({ error: "invalid json body" });
-    }
+    try { body = JSON.parse(body); }
+    catch { return res.status(400).json({ error: "invalid json body" }); }
   }
 
   const { action } = body || {};
   if (!action) return res.status(400).json({ error: "missing action" });
 
-  // ===== STATUS =====
+  // ============================================================
+  // ===== AZIONI ESISTENTI (INVARIATE) =========================
+  // ============================================================
+
   if (action === "status") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
     return res.json({ success: true, now: now() });
   }
 
-  // ===== LIST ROOMS =====
   if (action === "list_rooms") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
-
     const ids = await redis.smembers<string[]>(KEY_ROOMS_SET);
     const rooms: RoomSummary[] = [];
-
     for (const id of ids || []) {
       const st = await getRoom(id);
       if (st) rooms.push(toSummary(id, st));
     }
-
     return res.json({ success: true, rooms, now: now() });
   }
 
-  // ===== CREATE =====
   if (action === "create") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
-
     const room = normalizeKey(body.room_name) || crypto.randomBytes(3).toString("hex");
     const ttl_h = clampNumber(body.ttl_h, 12, 1, 24);
-
     const st: RoomState = {
       room_name: room,
       activity_title: body.activity_title || room,
@@ -270,88 +281,63 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       version: 1,
       updated_at: now(),
       expires_at: now() + ttl_h * 3600 * 1000,
+      group_id: null,
+      room_index: null,
     };
-
     await saveRoom(room, st);
     return res.json({ success: true, room });
   }
 
-  // ===== JOIN =====
   if (action === "join") {
     const key = normalizeKey(body.room);
     const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
-
     const writer = `Writer ${st.writers.length + 1}`;
     st.writers.push(writer);
     bump(st);
     await saveRoom(key, st);
-
     return res.json({ success: true, writer_id: writer, room_state: st });
   }
 
-  // ===== NEXT TURN (SU) — richiesto da Lovable =====
   if (action === "next_turn") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
-
     const key = normalizeKey(body.room);
     const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
-
-    if (!st.writers || st.writers.length === 0) {
-      return res.status(409).json({ error: "no writers yet" });
-    }
-
+    if (!st.writers || st.writers.length === 0) return res.status(409).json({ error: "no writers yet" });
     const turn_s = clampNumber(body.turn_s, 180, 15, 600);
-
-    // passa al writer successivo e avvia il timer turno
     st.current_writer_index = (st.current_writer_index + 1) % st.writers.length;
     st.turn_paused = false;
     st.turn_remaining_ms = null;
     st.turn_ends_at = now() + turn_s * 1000;
-
     bump(st);
     await saveRoom(key, st);
-
     return res.json({ success: true, room_state: st });
   }
 
-  // ===== PAUSE TURN (SU) — richiesto da Lovable =====
   if (action === "pause_turn") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
-
     const key = normalizeKey(body.room);
     const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
-
     if (st.turn_paused) return res.status(409).json({ error: "already paused" });
     if (st.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
-
     const remaining = Math.max(0, st.turn_ends_at - now());
     st.turn_paused = true;
     st.turn_remaining_ms = remaining;
     st.turn_ends_at = null;
-
     bump(st);
     await saveRoom(key, st);
-
     return res.json({ success: true, room_state: st });
   }
 
-  // ===== RESUME TURN (SU) =====
   if (action === "resume_turn") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
-
     const key = normalizeKey(body.room);
     if (!key) return res.status(400).json({ error: "missing room" });
-
     const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
-
-    if (!st.turn_paused || st.turn_remaining_ms == null) {
-      return res.status(409).json({ error: "not paused" });
-    }
-
+    if (!st.turn_paused || st.turn_remaining_ms == null) return res.status(409).json({ error: "not paused" });
     const remaining = Math.max(0, Number(st.turn_remaining_ms) || 0);
     if (remaining <= 0) {
       st.turn_paused = false;
@@ -361,74 +347,53 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       await saveRoom(key, st);
       return res.status(409).json({ error: "no remaining time" });
     }
-
     st.turn_paused = false;
     st.turn_ends_at = now() + remaining;
     st.turn_remaining_ms = null;
-
     bump(st);
     await saveRoom(key, st);
-
     return res.json({ success: true, room_state: st });
   }
 
-  // ===== SUBMIT TEXT (NSU) =====
   if (action === "submit_text") {
     const key = normalizeKey(body.room);
     const st = await getRoom(key);
     if (!st) return res.status(404).json({ error: "room not found" });
-
     if (now() > st.expires_at) return res.status(410).json({ error: "room expired" });
-
     const writer_id = normalizeKey(body.writer_id);
     if (!writer_id) return res.status(400).json({ error: "missing writer_id" });
-
     const writerIndex = st.writers.indexOf(writer_id);
     if (writerIndex < 0) return res.status(403).json({ error: "writer not in room" });
-
     const current = st.writers[st.current_writer_index];
     if (writer_id !== current) return res.status(403).json({ error: "not your turn" });
-
     if (st.turn_paused) return res.status(409).json({ error: "turn paused" });
-
     if (st.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
     if (st.turn_ends_at <= now()) return res.status(409).json({ error: "turn expired" });
-
     const txt = String(body.text || "").trim();
     if (!txt) return res.status(400).json({ error: "empty text" });
-
     st.story_so_far = (st.story_so_far ? st.story_so_far + "\n" : "") + txt;
-
-    // chiude il turno: solo SU fa ripartire con next_turn
     st.turn_ends_at = null;
     st.turn_paused = false;
     st.turn_remaining_ms = null;
-
     bump(st);
     await saveRoom(key, st);
-
     return res.json({ success: true, room_state: st });
   }
 
-  // ===== DELETE ROOM =====
   if (action === "delete_room") {
     if (!isAdmin) return res.status(401).json({ error: "admin required" });
-
     const key = normalizeKey(body.room);
     const st = await getRoom(key);
     if (!st) return res.json({ success: true });
-
     st.expires_at = now() - 1;
     st.turn_paused = true;
     st.turn_ends_at = null;
     st.turn_remaining_ms = null;
     bump(st);
-
     await saveRoom(key, st);
     return res.json({ success: true });
   }
 
-  // ===== GET STATE =====
   if (action === "get_state") {
     const key = normalizeKey(body.room);
     const st = await getRoom(key);
@@ -436,177 +401,395 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.json({ success: true, room_state: st });
   }
 
-  // =========================================================
-  // ===== GROUP ACTIONS (NUOVE) — NON MODIFICANO LE AZIONI ESISTENTI
-  // =========================================================
+  // ===== GROUP LEGACY (batch su rooms[]) — invariate =====
 
-  // BODY atteso:
-  // { action:"group_next_turn", rooms:["a","b"], turn_s?:180 }
   if (action === "group_next_turn") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
-
     const rooms = parseRoomsArray(body.rooms);
     if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
-
     const turn_s = clampNumber(body.turn_s, 180, 15, 600);
     const results: GroupResult[] = [];
-
     for (const room of rooms) {
       try {
         const st = await getRoom(room);
-        if (!st) {
-          results.push({ room, ok: false, status: 404, error: "room not found" });
-          continue;
-        }
+        if (!st) { results.push({ room, ok: false, status: 404, error: "room not found" }); continue; }
         if (!st.writers || st.writers.length === 0) {
-          results.push({ room, ok: false, status: 409, error: "no writers yet" });
-          continue;
+          results.push({ room, ok: false, status: 409, error: "no writers yet" }); continue;
         }
-
         st.current_writer_index = (st.current_writer_index + 1) % st.writers.length;
         st.turn_paused = false;
         st.turn_remaining_ms = null;
         st.turn_ends_at = now() + turn_s * 1000;
-
         bump(st);
         await saveRoom(room, st);
-
         results.push({ room, ok: true, status: 200, room_state: st });
       } catch (e: any) {
         results.push({ room, ok: false, status: 500, error: e?.message || "error" });
       }
     }
-
-    const okAll = results.every((r) => r.ok);
-    return res.json({ success: okAll, results, now: now() });
+    return res.json({ success: results.every((r) => r.ok), results, now: now() });
   }
 
-  // BODY:
-  // { action:"group_pause_turn", rooms:["a","b"] }
   if (action === "group_pause_turn") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
-
     const rooms = parseRoomsArray(body.rooms);
     if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
-
     const results: GroupResult[] = [];
-
     for (const room of rooms) {
       try {
         const st = await getRoom(room);
-        if (!st) {
-          results.push({ room, ok: false, status: 404, error: "room not found" });
-          continue;
-        }
-
-        if (st.turn_paused) {
-          results.push({ room, ok: false, status: 409, error: "already paused" });
-          continue;
-        }
-        if (st.turn_ends_at == null) {
-          results.push({ room, ok: false, status: 409, error: "no active turn" });
-          continue;
-        }
-
+        if (!st) { results.push({ room, ok: false, status: 404, error: "room not found" }); continue; }
+        if (st.turn_paused) { results.push({ room, ok: false, status: 409, error: "already paused" }); continue; }
+        if (st.turn_ends_at == null) { results.push({ room, ok: false, status: 409, error: "no active turn" }); continue; }
         const remaining = Math.max(0, st.turn_ends_at - now());
         st.turn_paused = true;
         st.turn_remaining_ms = remaining;
         st.turn_ends_at = null;
-
         bump(st);
         await saveRoom(room, st);
-
         results.push({ room, ok: true, status: 200, room_state: st });
       } catch (e: any) {
         results.push({ room, ok: false, status: 500, error: e?.message || "error" });
       }
     }
-
-    const okAll = results.every((r) => r.ok);
-    return res.json({ success: okAll, results, now: now() });
+    return res.json({ success: results.every((r) => r.ok), results, now: now() });
   }
 
-  // BODY:
-  // { action:"group_resume_turn", rooms:["a","b"] }
   if (action === "group_resume_turn") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
-
     const rooms = parseRoomsArray(body.rooms);
     if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
-
     const results: GroupResult[] = [];
-
     for (const room of rooms) {
       try {
         const st = await getRoom(room);
-        if (!st) {
-          results.push({ room, ok: false, status: 404, error: "room not found" });
-          continue;
-        }
-
+        if (!st) { results.push({ room, ok: false, status: 404, error: "room not found" }); continue; }
         if (!st.turn_paused || st.turn_remaining_ms == null) {
-          results.push({ room, ok: false, status: 409, error: "not paused" });
-          continue;
+          results.push({ room, ok: false, status: 409, error: "not paused" }); continue;
         }
-
         const remaining = Math.max(0, Number(st.turn_remaining_ms) || 0);
         if (remaining <= 0) {
-          results.push({ room, ok: false, status: 409, error: "no remaining time" });
-          continue;
+          results.push({ room, ok: false, status: 409, error: "no remaining time" }); continue;
         }
-
         st.turn_paused = false;
         st.turn_ends_at = now() + remaining;
         st.turn_remaining_ms = null;
-
         bump(st);
         await saveRoom(room, st);
-
         results.push({ room, ok: true, status: 200, room_state: st });
       } catch (e: any) {
         results.push({ room, ok: false, status: 500, error: e?.message || "error" });
       }
     }
-
-    const okAll = results.every((r) => r.ok);
-    return res.json({ success: okAll, results, now: now() });
+    return res.json({ success: results.every((r) => r.ok), results, now: now() });
   }
 
-  // BODY:
-  // { action:"group_delete_room", rooms:["a","b"] }
   if (action === "group_delete_room") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
-
     const rooms = parseRoomsArray(body.rooms);
     if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
-
     const results: GroupResult[] = [];
-
     for (const room of rooms) {
       try {
         const st = await getRoom(room);
-        if (!st) {
-          // per frontend ok comunque
-          results.push({ room, ok: true, status: 200 });
-          continue;
-        }
-
+        if (!st) { results.push({ room, ok: true, status: 200 }); continue; }
         st.expires_at = now() - 1;
         st.turn_paused = true;
         st.turn_ends_at = null;
         st.turn_remaining_ms = null;
         bump(st);
-
         await saveRoom(room, st);
-
         results.push({ room, ok: true, status: 200 });
       } catch (e: any) {
         results.push({ room, ok: false, status: 500, error: e?.message || "error" });
       }
     }
+    return res.json({ success: results.every((r) => r.ok), results, now: now() });
+  }
 
-    const okAll = results.every((r) => r.ok);
-    return res.json({ success: okAll, results, now: now() });
+  // ============================================================
+  // ===== NUOVE AZIONI GROUP V2 (round-robin server-side) ======
+  // ============================================================
+
+  // create_group: SU crea un gruppo con N stanze pre-allocate
+  // body: { action, expected_writers, activity_title, room_mode?, prompt_seed?, ttl_h? }
+  if (action === "create_group") {
+    if (!isAdmin) return res.status(401).json({ error: "admin only" });
+    const N = clampNumber(body.expected_writers, 0, 2, 20);
+    if (N < 2) return res.status(400).json({ error: "expected_writers must be 2..20" });
+    const ttl_h = clampNumber(body.ttl_h, 12, 1, 24);
+    const expires_at = now() + ttl_h * 3600 * 1000;
+    const gid = `grp-${crypto.randomBytes(3).toString("hex")}`;
+    const activity_title = String(body.activity_title || gid).trim();
+    const room_mode: RoomMode = body.room_mode || "CONTINUA_TU";
+    const prompt_seed = String(body.prompt_seed || "").trim();
+
+    const roomNames: string[] = [];
+    for (let i = 1; i <= N; i++) {
+      const rname = `${gid}-${i}`;
+      const rst: RoomState = {
+        room_name: rname,
+        activity_title: `${activity_title} #${i}`,
+        room_mode,
+        prompt_seed,
+        story_so_far: "",
+        writers: [],
+        current_writer_index: 0,
+        turn_ends_at: null,
+        turn_paused: false,
+        turn_remaining_ms: null,
+        version: 1,
+        updated_at: now(),
+        expires_at,
+        group_id: gid,
+        room_index: i - 1,
+      };
+      await saveRoom(rname, rst);
+      roomNames.push(rname);
+    }
+
+    const g: GroupState = {
+      group_id: gid,
+      activity_title,
+      room_mode,
+      prompt_seed,
+      expected_writers: N,
+      rooms: roomNames,
+      writers: [],
+      turn_number: 0,
+      turn_ends_at: null,
+      turn_paused: false,
+      turn_remaining_ms: null,
+      version: 1,
+      created_at: now(),
+      updated_at: now(),
+      expires_at,
+    };
+    await saveGroup(g);
+    return res.json({ success: true, group_id: gid, group_state: g });
+  }
+
+  // list_groups
+  if (action === "list_groups") {
+    if (!isAdmin) return res.status(401).json({ error: "admin only" });
+    const ids = await redis.smembers<string[]>(KEY_GROUPS_SET);
+    const groups: GroupState[] = [];
+    for (const id of ids || []) {
+      const g = await getGroup(id);
+      if (g) groups.push(g);
+    }
+    return res.json({ success: true, groups, now: now() });
+  }
+
+  // group_state: stato + assegnazioni turno corrente
+  // body: { action, group_id }
+  if (action === "group_state") {
+    const gid = normalizeKey(body.group_id);
+    const g = await getGroup(gid);
+    if (!g) return res.status(404).json({ error: "group not found" });
+    const assignments = computeAssignments(g);
+    return res.json({ success: true, group_state: g, assignments, now: now() });
+  }
+
+  // join_group: writer entra. Rifiutato se gruppo pieno.
+  // body: { action, group_id }
+  if (action === "join_group") {
+    const gid = normalizeKey(body.group_id);
+    const g = await getGroup(gid);
+    if (!g) return res.status(404).json({ error: "group not found" });
+    if (g.writers.length >= g.expected_writers) {
+      return res.status(409).json({ error: "group full" });
+    }
+    const writer_id = `Writer ${g.writers.length + 1}`;
+    g.writers.push(writer_id);
+    bump(g);
+    await saveGroup(g);
+    // Aggiungi anche il writer dentro ogni stanza del gruppo (per legacy/visibilità)
+    for (const rname of g.rooms) {
+      const rst = await getRoom(rname);
+      if (rst && !rst.writers.includes(writer_id)) {
+        rst.writers.push(writer_id);
+        bump(rst);
+        await saveRoom(rname, rst);
+      }
+    }
+    return res.json({ success: true, writer_id, group_state: g });
+  }
+
+  // get_my_assignment: writer chiede su quale stanza scrivere ora
+  // body: { action, group_id, writer_id }
+  if (action === "get_my_assignment") {
+    const gid = normalizeKey(body.group_id);
+    const writer_id = normalizeKey(body.writer_id);
+    const g = await getGroup(gid);
+    if (!g) return res.status(404).json({ error: "group not found" });
+    const idx = g.writers.indexOf(writer_id);
+    if (idx < 0) return res.status(403).json({ error: "writer not in group" });
+    const assignments = computeAssignments(g);
+    return res.json({
+      success: true,
+      assigned_room: assignments[writer_id] || null,
+      turn_number: g.turn_number,
+      turn_ends_at: g.turn_ends_at,
+      turn_paused: g.turn_paused,
+      turn_remaining_ms: g.turn_remaining_ms,
+      writer_id,
+      group_id: gid,
+    });
+  }
+
+  // group_advance_turn: SU avanza il turno (incrementa turn_number, ricalcola assegnazioni)
+  // body: { action, group_id, turn_s? }
+  if (action === "group_advance_turn") {
+    if (!isAdmin) return res.status(401).json({ error: "admin only" });
+    const gid = normalizeKey(body.group_id);
+    const g = await getGroup(gid);
+    if (!g) return res.status(404).json({ error: "group not found" });
+    if (g.writers.length < g.expected_writers) {
+      return res.status(409).json({
+        error: "waiting for writers",
+        joined: g.writers.length,
+        expected: g.expected_writers,
+      });
+    }
+    const turn_s = clampNumber(body.turn_s, 180, 15, 600);
+    g.turn_number += 1;
+    g.turn_paused = false;
+    g.turn_remaining_ms = null;
+    g.turn_ends_at = now() + turn_s * 1000;
+    bump(g);
+    await saveGroup(g);
+    // Allinea i timer di tutte le stanze del gruppo (per coerenza visiva con la legacy)
+    const assignments = computeAssignments(g);
+    for (const rname of g.rooms) {
+      const rst = await getRoom(rname);
+      if (!rst) continue;
+      // current_writer_index della stanza = writer assegnato a quella stanza
+      const assignedWriter = Object.entries(assignments).find(([, r]) => r === rname)?.[0] || null;
+      if (assignedWriter) {
+        const wIdx = rst.writers.indexOf(assignedWriter);
+        if (wIdx >= 0) rst.current_writer_index = wIdx;
+      }
+      rst.turn_paused = false;
+      rst.turn_remaining_ms = null;
+      rst.turn_ends_at = g.turn_ends_at;
+      bump(rst);
+      await saveRoom(rname, rst);
+    }
+    return res.json({ success: true, group_state: g, assignments, now: now() });
+  }
+
+  // group_pause: pausa di tutto il gruppo via group_id
+  // body: { action, group_id }
+  if (action === "group_pause") {
+    if (!isAdmin) return res.status(401).json({ error: "admin only" });
+    const gid = normalizeKey(body.group_id);
+    const g = await getGroup(gid);
+    if (!g) return res.status(404).json({ error: "group not found" });
+    if (g.turn_paused) return res.status(409).json({ error: "already paused" });
+    if (g.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
+    const remaining = Math.max(0, g.turn_ends_at - now());
+    g.turn_paused = true;
+    g.turn_remaining_ms = remaining;
+    g.turn_ends_at = null;
+    bump(g);
+    await saveGroup(g);
+    for (const rname of g.rooms) {
+      const rst = await getRoom(rname);
+      if (!rst) continue;
+      rst.turn_paused = true;
+      rst.turn_remaining_ms = remaining;
+      rst.turn_ends_at = null;
+      bump(rst);
+      await saveRoom(rname, rst);
+    }
+    return res.json({ success: true, group_state: g });
+  }
+
+  // group_resume: ripresa di tutto il gruppo
+  // body: { action, group_id }
+  if (action === "group_resume") {
+    if (!isAdmin) return res.status(401).json({ error: "admin only" });
+    const gid = normalizeKey(body.group_id);
+    const g = await getGroup(gid);
+    if (!g) return res.status(404).json({ error: "group not found" });
+    if (!g.turn_paused || g.turn_remaining_ms == null) return res.status(409).json({ error: "not paused" });
+    const remaining = Math.max(0, Number(g.turn_remaining_ms) || 0);
+    if (remaining <= 0) return res.status(409).json({ error: "no remaining time" });
+    g.turn_paused = false;
+    g.turn_ends_at = now() + remaining;
+    g.turn_remaining_ms = null;
+    bump(g);
+    await saveGroup(g);
+    for (const rname of g.rooms) {
+      const rst = await getRoom(rname);
+      if (!rst) continue;
+      rst.turn_paused = false;
+      rst.turn_ends_at = g.turn_ends_at;
+      rst.turn_remaining_ms = null;
+      bump(rst);
+      await saveRoom(rname, rst);
+    }
+    return res.json({ success: true, group_state: g });
+  }
+
+  // group_submit_text: writer invia testo nella stanza assegnata (con validazione round-robin)
+  // body: { action, group_id, writer_id, text }
+  if (action === "group_submit_text") {
+    const gid = normalizeKey(body.group_id);
+    const writer_id = normalizeKey(body.writer_id);
+    const g = await getGroup(gid);
+    if (!g) return res.status(404).json({ error: "group not found" });
+    if (now() > g.expires_at) return res.status(410).json({ error: "group expired" });
+    const idx = g.writers.indexOf(writer_id);
+    if (idx < 0) return res.status(403).json({ error: "writer not in group" });
+    if (g.turn_number <= 0) return res.status(409).json({ error: "no active turn" });
+    if (g.turn_paused) return res.status(409).json({ error: "turn paused" });
+    if (g.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
+    if (g.turn_ends_at <= now()) return res.status(409).json({ error: "turn expired" });
+    const txt = String(body.text || "").trim();
+    if (!txt) return res.status(400).json({ error: "empty text" });
+    const assignments = computeAssignments(g);
+    const targetRoom = assignments[writer_id];
+    if (!targetRoom) return res.status(409).json({ error: "no room assigned" });
+    const rst = await getRoom(targetRoom);
+    if (!rst) return res.status(404).json({ error: "assigned room not found" });
+    rst.story_so_far = (rst.story_so_far ? rst.story_so_far + "\n" : "") + txt;
+    bump(rst);
+    await saveRoom(targetRoom, rst);
+    return res.json({
+      success: true,
+      assigned_room: targetRoom,
+      room_state: rst,
+      group_state: g,
+    });
+  }
+
+  // delete_group: elimina gruppo + tutte le sue stanze
+  // body: { action, group_id }
+  if (action === "delete_group") {
+    if (!isAdmin) return res.status(401).json({ error: "admin only" });
+    const gid = normalizeKey(body.group_id);
+    const g = await getGroup(gid);
+    if (!g) return res.json({ success: true });
+    for (const rname of g.rooms) {
+      const rst = await getRoom(rname);
+      if (rst) {
+        rst.expires_at = now() - 1;
+        rst.turn_paused = true;
+        rst.turn_ends_at = null;
+        rst.turn_remaining_ms = null;
+        bump(rst);
+        await saveRoom(rname, rst);
+      }
+    }
+    g.expires_at = now() - 1;
+    g.turn_paused = true;
+    g.turn_ends_at = null;
+    g.turn_remaining_ms = null;
+    bump(g);
+    await saveGroup(g);
+    return res.json({ success: true });
   }
 
   return res.status(400).json({ error: "unknown action" });

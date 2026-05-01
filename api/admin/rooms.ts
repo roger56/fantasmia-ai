@@ -1,9 +1,23 @@
 // API rooms.ts — versione con supporto Gruppi V2 (round-robin server-side)
-// Retrocompatibile: tutte le azioni esistenti restano invariate.
+// + PARALLELISMO writers (N writers ↔ N stanze ad ogni turno, niente attese)
+// + total_turns = X·N (X giri completi) e auto-end del gruppo
+// + submitted_this_turn per evitare doppio submit nello stesso turno
+// + status di gruppo ("waiting" | "active" | "paused" | "ended")
 //
-// Nuove azioni gruppo (V2):
+// Retrocompatibile: tutte le azioni "single room" e "group legacy" restano invariate.
+//
+// Modello round-robin (per writer w in 0..N-1, turno t in 1..total_turns):
+//   room_index(w, t) = (w + t - 1) mod N
+// Conseguenze:
+//   - ad ogni turno tutti gli N writers sono attivi contemporaneamente
+//   - ogni stanza ha esattamente un writer per turno
+//   - dopo N turni il ciclo si chiude (giro completo); con total_turns = X·N
+//     ogni writer scrive X volte in ogni stanza
+//
+// Azioni gruppo V2:
 //   create_group, list_groups, group_state, join_group, get_my_assignment,
-//   group_advance_turn, group_pause, group_resume, group_submit_text, delete_group
+//   group_advance_turn (anche "force next turn"), group_pause, group_resume,
+//   group_submit_text, delete_group
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "crypto";
@@ -83,19 +97,24 @@ type RoomSummary = {
   group_id?: string | null;
 };
 
-// V2: gruppo
+// V2: gruppo (con parallelismo)
+type GroupStatus = "waiting" | "active" | "paused" | "ended";
+
 type GroupState = {
   group_id: string;
   activity_title: string;
   room_mode: RoomMode;
   prompt_seed: string;
-  expected_writers: number;       // N (cap rigido)
-  rooms: string[];                // N nomi stanze pre-create
-  writers: string[];              // ordinati per ordine di join, max N
-  turn_number: number;            // 0 = nessun turno avviato; 1, 2, ... = turno corrente
+  expected_writers: number;        // N (cap rigido)
+  rooms: string[];                 // N nomi stanze pre-create
+  writers: string[];               // ordine di join, max N
+  turn_number: number;             // 0 = nessun turno avviato; 1..total_turns
+  total_turns: number;             // X·N (multiplo intero positivo di N), 0 = illimitato (legacy)
   turn_ends_at: number | null;
   turn_paused: boolean;
   turn_remaining_ms: number | null;
+  submitted_this_turn: string[];   // writer_id che hanno già inviato nel turno corrente
+  status: GroupStatus;
   version: number;
   created_at: number;
   updated_at: number;
@@ -185,6 +204,14 @@ async function getGroup(gid: string): Promise<GroupState | null> {
     await redis.del(KEY_GROUP(gid));
     await redis.srem(KEY_GROUPS_SET, gid);
     return null;
+  }
+  // Backfill campi nuovi su gruppi creati prima del deploy V2
+  if (typeof (g as any).total_turns !== "number") (g as any).total_turns = 0;
+  if (!Array.isArray((g as any).submitted_this_turn)) (g as any).submitted_this_turn = [];
+  if (!(g as any).status) {
+    (g as any).status = g.turn_number > 0
+      ? (g.turn_paused ? "paused" : "active")
+      : "waiting";
   }
   return g;
 }
@@ -508,15 +535,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // ============================================================
-  // ===== NUOVE AZIONI GROUP V2 (round-robin server-side) ======
+  // ===== AZIONI GROUP V2 (round-robin server-side, parallelo) =
   // ============================================================
 
-  // create_group: SU crea un gruppo con N stanze pre-allocate
-  // body: { action, expected_writers, activity_title, room_mode?, prompt_seed?, ttl_h? }
+  // create_group
+  // body: { action, expected_writers, total_turns, activity_title,
+  //         room_mode?, prompt_seed?, ttl_h? }
+  // Vincolo: total_turns deve essere multiplo intero positivo di expected_writers.
   if (action === "create_group") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
     const N = clampNumber(body.expected_writers, 0, 2, 20);
     if (N < 2) return res.status(400).json({ error: "expected_writers must be 2..20" });
+    const total_turns = clampNumber(body.total_turns, 0, 1, 200);
+    if (total_turns < N || total_turns % N !== 0) {
+      return res.status(400).json({
+        error: `total_turns must be a positive multiple of expected_writers (got ${total_turns}, N=${N})`,
+      });
+    }
     const ttl_h = clampNumber(body.ttl_h, 12, 1, 24);
     const expires_at = now() + ttl_h * 3600 * 1000;
     const gid = `grp-${crypto.randomBytes(3).toString("hex")}`;
@@ -557,9 +592,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       rooms: roomNames,
       writers: [],
       turn_number: 0,
+      total_turns,
       turn_ends_at: null,
       turn_paused: false,
       turn_remaining_ms: null,
+      submitted_this_turn: [],
+      status: "waiting",
       version: 1,
       created_at: now(),
       updated_at: now(),
@@ -591,12 +629,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.json({ success: true, group_state: g, assignments, now: now() });
   }
 
-  // join_group: writer entra. Rifiutato se gruppo pieno.
+  // join_group: writer entra. Rifiutato se gruppo pieno o concluso.
   // body: { action, group_id }
   if (action === "join_group") {
     const gid = normalizeKey(body.group_id);
     const g = await getGroup(gid);
     if (!g) return res.status(404).json({ error: "group not found" });
+    if (g.status === "ended") return res.status(409).json({ error: "group ended" });
     if (g.writers.length >= g.expected_writers) {
       return res.status(409).json({ error: "group full" });
     }
@@ -616,7 +655,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.json({ success: true, writer_id, group_state: g });
   }
 
-  // get_my_assignment: writer chiede su quale stanza scrivere ora
+  // get_my_assignment: writer chiede su quale stanza scrivere ora.
+  // Ora ritorna anche is_my_turn (true per TUTTI i writer non-submittati durante un turno attivo).
   // body: { action, group_id, writer_id }
   if (action === "get_my_assignment") {
     const gid = normalizeKey(body.group_id);
@@ -626,25 +666,42 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const idx = g.writers.indexOf(writer_id);
     if (idx < 0) return res.status(403).json({ error: "writer not in group" });
     const assignments = computeAssignments(g);
+    const has_submitted = g.submitted_this_turn.includes(writer_id);
+    const is_my_turn =
+      g.status === "active" &&
+      !g.turn_paused &&
+      g.turn_number > 0 &&
+      g.turn_ends_at != null &&
+      g.turn_ends_at > now() &&
+      !has_submitted;
     return res.json({
       success: true,
       assigned_room: assignments[writer_id] || null,
       turn_number: g.turn_number,
+      total_turns: g.total_turns,
       turn_ends_at: g.turn_ends_at,
       turn_paused: g.turn_paused,
       turn_remaining_ms: g.turn_remaining_ms,
+      status: g.status,
+      has_submitted,
+      is_my_turn,
       writer_id,
       group_id: gid,
     });
   }
 
-  // group_advance_turn: SU avanza il turno (incrementa turn_number, ricalcola assegnazioni)
+  // group_advance_turn: SU avanza il turno (incrementa turn_number, ricalcola assegnazioni).
+  // Funziona come "force next turn" se chiamato prima del timeout.
+  // Quando turn_number supera total_turns, marca status="ended".
   // body: { action, group_id, turn_s? }
   if (action === "group_advance_turn") {
     if (!isAdmin) return res.status(401).json({ error: "admin only" });
     const gid = normalizeKey(body.group_id);
     const g = await getGroup(gid);
     if (!g) return res.status(404).json({ error: "group not found" });
+    if (g.status === "ended") {
+      return res.json({ success: true, group_state: g, ended: true });
+    }
     if (g.writers.length < g.expected_writers) {
       return res.status(409).json({
         error: "waiting for writers",
@@ -652,14 +709,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         expected: g.expected_writers,
       });
     }
+    const next = g.turn_number + 1;
+    if (g.total_turns > 0 && next > g.total_turns) {
+      // Auto-end
+      g.status = "ended";
+      g.turn_paused = false;
+      g.turn_ends_at = null;
+      g.turn_remaining_ms = null;
+      g.submitted_this_turn = [];
+      bump(g);
+      await saveGroup(g);
+      // Ferma anche i timer delle stanze
+      for (const rname of g.rooms) {
+        const rst = await getRoom(rname);
+        if (!rst) continue;
+        rst.turn_ends_at = null;
+        rst.turn_paused = false;
+        rst.turn_remaining_ms = null;
+        bump(rst);
+        await saveRoom(rname, rst);
+      }
+      return res.json({ success: true, group_state: g, ended: true });
+    }
     const turn_s = clampNumber(body.turn_s, 180, 15, 600);
-    g.turn_number += 1;
+    g.turn_number = next;
+    g.status = "active";
     g.turn_paused = false;
     g.turn_remaining_ms = null;
     g.turn_ends_at = now() + turn_s * 1000;
+    g.submitted_this_turn = []; // reset submit per il nuovo turno
     bump(g);
     await saveGroup(g);
-    // Allinea i timer di tutte le stanze del gruppo (per coerenza visiva con la legacy)
+
+    // Allinea i timer di tutte le stanze del gruppo (per coerenza visiva)
     const assignments = computeAssignments(g);
     for (const rname of g.rooms) {
       const rst = await getRoom(rname);
@@ -686,12 +768,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const gid = normalizeKey(body.group_id);
     const g = await getGroup(gid);
     if (!g) return res.status(404).json({ error: "group not found" });
+    if (g.status === "ended") return res.status(409).json({ error: "group ended" });
     if (g.turn_paused) return res.status(409).json({ error: "already paused" });
     if (g.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
     const remaining = Math.max(0, g.turn_ends_at - now());
     g.turn_paused = true;
     g.turn_remaining_ms = remaining;
     g.turn_ends_at = null;
+    g.status = "paused";
     bump(g);
     await saveGroup(g);
     for (const rname of g.rooms) {
@@ -713,12 +797,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const gid = normalizeKey(body.group_id);
     const g = await getGroup(gid);
     if (!g) return res.status(404).json({ error: "group not found" });
+    if (g.status === "ended") return res.status(409).json({ error: "group ended" });
     if (!g.turn_paused || g.turn_remaining_ms == null) return res.status(409).json({ error: "not paused" });
     const remaining = Math.max(0, Number(g.turn_remaining_ms) || 0);
     if (remaining <= 0) return res.status(409).json({ error: "no remaining time" });
     g.turn_paused = false;
     g.turn_ends_at = now() + remaining;
     g.turn_remaining_ms = null;
+    g.status = "active";
     bump(g);
     await saveGroup(g);
     for (const rname of g.rooms) {
@@ -733,7 +819,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.json({ success: true, group_state: g });
   }
 
-  // group_submit_text: writer invia testo nella stanza assegnata (con validazione round-robin)
+  // group_submit_text: writer invia testo nella stanza assegnata.
+  // - Valida assegnazione round-robin
+  // - Blocca doppio submit nello stesso turno (submitted_this_turn)
+  // - NON avanza il turno automaticamente: l'avanzamento avviene solo via
+  //   group_advance_turn (al timeout o forzato dal SU)
   // body: { action, group_id, writer_id, text }
   if (action === "group_submit_text") {
     const gid = normalizeKey(body.group_id);
@@ -741,12 +831,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const g = await getGroup(gid);
     if (!g) return res.status(404).json({ error: "group not found" });
     if (now() > g.expires_at) return res.status(410).json({ error: "group expired" });
+    if (g.status === "ended") return res.status(409).json({ error: "group ended" });
     const idx = g.writers.indexOf(writer_id);
     if (idx < 0) return res.status(403).json({ error: "writer not in group" });
     if (g.turn_number <= 0) return res.status(409).json({ error: "no active turn" });
     if (g.turn_paused) return res.status(409).json({ error: "turn paused" });
     if (g.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
     if (g.turn_ends_at <= now()) return res.status(409).json({ error: "turn expired" });
+    if (g.submitted_this_turn.includes(writer_id)) {
+      return res.status(409).json({ error: "already submitted this turn" });
+    }
     const txt = String(body.text || "").trim();
     if (!txt) return res.status(400).json({ error: "empty text" });
     const assignments = computeAssignments(g);
@@ -757,6 +851,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     rst.story_so_far = (rst.story_so_far ? rst.story_so_far + "\n" : "") + txt;
     bump(rst);
     await saveRoom(targetRoom, rst);
+    g.submitted_this_turn.push(writer_id);
+    bump(g);
+    await saveGroup(g);
     return res.json({
       success: true,
       assigned_room: targetRoom,
@@ -787,6 +884,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     g.turn_paused = true;
     g.turn_ends_at = null;
     g.turn_remaining_ms = null;
+    g.status = "ended";
     bump(g);
     await saveGroup(g);
     return res.json({ success: true });

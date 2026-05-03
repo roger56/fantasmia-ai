@@ -667,12 +667,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (idx < 0) return res.status(403).json({ error: "writer not in group" });
     const assignments = computeAssignments(g);
     const has_submitted = g.submitted_this_turn.includes(writer_id);
+    // FIX bug "writer in attesa": NON gating on g.turn_ends_at > now().
+    // Il timeout viene gestito dall'avanzamento turno (auto o forzato dal SU).
+    // Finché lo status è "active" e il writer non ha submittato, può scrivere.
     const is_my_turn =
       g.status === "active" &&
       !g.turn_paused &&
       g.turn_number > 0 &&
-      g.turn_ends_at != null &&
-      g.turn_ends_at > now() &&
       !has_submitted;
     return res.json({
       success: true,
@@ -759,6 +760,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       await saveRoom(rname, rst);
     }
     return res.json({ success: true, group_state: g, assignments, now: now() });
+  }
+
+  // group_force_next_turn: alias di group_advance_turn che riusa la durata corrente
+  // del turno (default 180s). Usato dal pulsante "Forza prossimo turno" del SU.
+  // body: { action, group_id }
+  if (action === "group_force_next_turn") {
+    if (!isAdmin) return res.status(401).json({ error: "admin only" });
+    const gid = normalizeKey(body.group_id);
+    const g = await getGroup(gid);
+    if (!g) return res.status(404).json({ error: "group not found" });
+    let turn_s = 180;
+    if (g.turn_ends_at && !g.turn_paused) {
+      const remaining = Math.max(0, g.turn_ends_at - now());
+      if (remaining > 0) turn_s = Math.max(15, Math.round(remaining / 1000));
+    }
+    (body as any).action = "group_advance_turn";
+    (body as any).turn_s = turn_s;
+    return handler(req, res);
   }
 
   // group_pause: pausa di tutto il gruppo via group_id

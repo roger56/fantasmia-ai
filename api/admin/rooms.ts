@@ -1,5 +1,5 @@
 // API rooms.ts — versione con supporto Gruppi V2 (round-robin server-side)
-// + PARALLELISMO writers (N writers ↔ N stanze ad ogni turno, niente attese)
+// + PARALLELISMO  writers (N writers ↔ N stanze ad ogni turno, niente attese)
 // + total_turns = X·N (X giri completi) e auto-end del gruppo
 // + submitted_this_turn per evitare doppio submit nello stesso turno
 // + status di gruppo ("waiting" | "active" | "paused" | "ended")

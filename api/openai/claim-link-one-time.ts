@@ -1,3 +1,69 @@
+/*
+  ==================================================
+  FantasMIA / Fantasmia - API CLAIM LINK ONE-TIME NSU
+  ==================================================
+
+  SCOPO DEL MODULO
+
+  Questo endpoint Vercel gestisce il claim di un link NSU one-time
+  o permanente di Fantasmia.
+
+  Il token ricevuto contiene un payload firmato via HMAC che definisce:
+
+  - username NSU
+  - tipo token: NSU_ONE_TIME
+  - durata sessione ttl_h
+  - eventuale scadenza invito invite_exp
+  - eventuale flag permanent
+  - eventuali metadati:
+      client_email
+      su_email
+
+  COMPORTAMENTO TOKEN STANDARD
+
+  Se permanent NON è true:
+
+  - viene verificata la scadenza invite_exp
+  - se l’invito è scaduto, l’endpoint restituisce errore 410
+  - expires_at viene calcolato come adesso + ttl_h
+
+  COMPORTAMENTO TOKEN PERMANENTE
+
+  Se permanent = true:
+
+  - il token resta riutilizzabile
+  - non viene bloccato dalla normale scadenza breve invite_exp
+  - expires_at viene restituito per compatibilità frontend
+  - expires_at viene valorizzato come adesso + 10 anni
+
+  NOTA REDIS / DATABASE
+
+  Questo endpoint è stateless:
+
+  - non usa Redis / Upstash
+  - non salva token
+  - non invalida token
+  - non è direttamente influenzato dal cambio database Redis
+
+  SICUREZZA
+
+  - Il token viene validato con firma HMAC SHA-256.
+  - Il segreto è letto da:
+      NSU_ONE_TIME_SECRET
+
+  - Non inserire segreti nel codice sorgente.
+  - Non loggare token o payload sensibili.
+
+  CORS
+
+  Ricordarsi di mantenere allineata la allowlist domini con:
+  - fantasmia.it
+  - www.fantasmia.it
+  - fantas-ia.it
+  - www.fantas-ia.it
+  - domini preview Lovable
+  - localhost di sviluppo
+*/
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "crypto";
 

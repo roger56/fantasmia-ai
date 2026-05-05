@@ -1,3 +1,92 @@
+/*
+  ==================================================
+  FantasMIA / Fantasmia - API CREATE LINK ONE-TIME NSU
+  ==================================================
+
+  SCOPO DEL MODULO
+
+  Questo endpoint Vercel genera un link NSU one-time o permanente
+  per accesso a Fantasmia.
+
+  L’endpoint è riservato ad ADMIN e richiede:
+
+  - Authorization: Bearer <ADMIN_JWT>
+
+  Il token generato contiene un payload firmato via HMAC con:
+
+  - username NSU
+  - tipo token: NSU_ONE_TIME
+  - durata sessione ttl_h
+  - scadenza invito invite_exp
+  - eventuale flag permanent
+  - eventuale label descrittiva
+  - eventuali metadati:
+      client_email
+      su_email
+
+  COMPORTAMENTO TOKEN STANDARD
+
+  Se permanent NON è true:
+
+  - il link ha una finestra di invito temporanea
+  - invite_exp viene impostato a circa 12 ore
+  - invite_exp_at viene restituito in risposta
+  - dopo il claim, la sessione frontend usa ttl_h
+
+  COMPORTAMENTO TOKEN PERMANENTE
+
+  Se permanent = true:
+
+  - il token viene marcato come permanente
+  - invite_exp viene impostato a 10 anni nel futuro
+  - invite_exp_at viene restituito come null per chiarezza frontend
+  - il claim-link corrispondente non blocca il token per scadenza breve
+
+  NOTA REDIS / DATABASE
+
+  Questo endpoint è stateless:
+
+  - non usa Redis / Upstash
+  - non salva token
+  - non crea sessioni lato database
+  - non è direttamente influenzato dal cambio database Redis
+
+  SICUREZZA
+
+  - Il token ADMIN viene verificato con HS256 usando:
+      ADMIN_JWT_SECRET
+
+  - Il token NSU viene firmato con HMAC SHA-256 usando:
+      NSU_ONE_TIME_SECRET
+
+  - Non inserire segreti nel codice sorgente.
+  - Non loggare token, payload sensibili o segreti.
+
+  CONFIGURAZIONE LINK
+
+  Il link finale viene costruito usando:
+
+      PUBLIC_BASE_URL
+
+  Se PUBLIC_BASE_URL non è definito, viene usato il fallback:
+
+      https://fantasmia.it
+
+  Se si vuole usare il nuovo dominio pubblico, impostare in Vercel:
+
+      PUBLIC_BASE_URL=https://fantas-ia.it
+
+  CORS
+
+  Ricordarsi di mantenere allineata la allowlist domini con:
+
+  - fantasmia.it
+  - www.fantasmia.it
+  - fantas-ia.it
+  - www.fantas-ia.it
+  - domini preview Lovable
+  - localhost di sviluppo
+*/
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "crypto";
 

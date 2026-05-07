@@ -15,6 +15,14 @@
   5. submit controllato per evitare doppio invio nello stesso turno
   6. stato gruppo: waiting | active | paused | ended
   7. CORS per domini ufficiali, nuovo dominio fantas-ia.it, Lovable e localhost
+  8. FUNZIONI ACCESSORIE COLLABORATIVE (extras):
+       - Suggerimenti su richiesta del writer (1 per writer, casuali, non
+         ripetibili nel gruppo).
+       - Obblighi narrativi assegnati automaticamente dal sistema (max 1 per
+         turno, salta il primo turno, max 1 per writer, non ripetibili).
+       - Mini Q&A privata writer ↔ writer per i suggerimenti che richiedono
+         una domanda al primo writer / al writer precedente.
+       - Log persistente per la verifica manuale finale del SU.
 
   MODELLO GRUPPI V2
 
@@ -34,17 +42,30 @@
     room_index(writerIndex, turnNumber) =
       (writerIndex + turnNumber - 1) mod N
 
-  Esempio con 3 writers e 3 stanze:
+  EXTRAS (SUGGERIMENTI & OBBLIGHI)
 
-    Turno 1:
-      W1 -> Stanza 1
-      W2 -> Stanza 2
-      W3 -> Stanza 3
+  Lo stato extras è un campo opzionale del GroupState (`extras`) e contiene:
+    - config: liste suggerimenti/obblighi attivi e secondi notifica
+    - suggestions_pool: id ancora estraibili (server pop random)
+    - obligations_pool: id ancora estraibili
+    - used_suggestions_by_writer: writer -> {id, turn} (max 1 per writer)
+    - obligations_log: lista entry {turn, writer_id, obligation_id, assigned_at}
+    - qa_threads: messaggi 1-a-1 tra writer
+    - suggestion_in_flight_until: timestamp per notifica passiva agli altri
 
-    Turno 2:
-      W1 -> Stanza 2
-      W2 -> Stanza 3
-      W3 -> Stanza 1
+  Regole obblighi:
+    - Mai assegnati al turno 1.
+    - Da turno 2 in poi: 1 writer per turno, scelto random tra chi non ha
+      ancora ricevuto un obbligo nel gruppo.
+    - Quantità totale (NO):
+        NT > NW  ->  NO = NW
+        NT = NW  ->  NO = NW - 1
+      (almeno un turno resta libero)
+
+  Regole suggerimenti:
+    - Pool iniziale = NW elementi pescati dalla lista config.
+    - Estrazione random a richiesta writer; rimosso dal pool.
+    - 1 sola richiesta per writer per l'intera durata del gruppo.
 
   NOTE REDIS / UPSTASH
 
@@ -65,6 +86,9 @@
   SICUREZZA
 
   - Le azioni amministrative richiedono Bearer token ADMIN.
+  - Le action extras writer-side (group_request_suggestion, group_get_my_extras,
+    group_send_qa) sono pubbliche ma vincolate al fatto che il writer_id sia
+    presente nel gruppo. Nessun PII oltre il writer_id.
   - Nessun log di token o credenziali.
 */
 
@@ -174,6 +198,55 @@ type RoomSummary = {
 
 type GroupStatus = "waiting" | "active" | "paused" | "ended";
 
+/*
+  ----- EXTRAS TYPES -----
+*/
+
+type ExtrasConfig = {
+  /** ids dei suggerimenti attivi per il gruppo (lista canonica vive lato client) */
+  suggestions: string[];
+  /** ids degli obblighi attivi per il gruppo */
+  obligations: string[];
+  /** secondi di notifica "Suggerimento richiesto" mostrata agli altri writer */
+  notify_seconds: number;
+};
+
+type SuggestionUse = {
+  suggestion_id: string;
+  turn: number;
+  used_at: number;
+};
+
+type ObligationLogEntry = {
+  turn: number;
+  writer_id: string;
+  obligation_id: string;
+  assigned_at: number;
+};
+
+type QaMessage = {
+  id: string;
+  from_writer: string;
+  to_writer: string;
+  body: string;
+  /** id del messaggio cui si risponde, opzionale */
+  reply_to?: string | null;
+  /** suggerimento di origine (per tracciabilità), opzionale */
+  origin_suggestion_id?: string | null;
+  created_at: number;
+};
+
+type ExtrasState = {
+  config: ExtrasConfig;
+  suggestions_pool: string[];
+  obligations_pool: string[];
+  used_suggestions_by_writer: Record<string, SuggestionUse>;
+  obligations_log: ObligationLogEntry[];
+  qa_threads: QaMessage[];
+  /** timestamp epoch ms fino al quale gli altri writer mostrano la notifica passiva */
+  suggestion_in_flight_until: number | null;
+};
+
 type GroupState = {
   group_id: string;
   activity_title: string;
@@ -193,6 +266,9 @@ type GroupState = {
 
   submitted_this_turn: string[];
   status: GroupStatus;
+
+  /** opzionale: presente solo se il gruppo è stato creato con extras_config */
+  extras?: ExtrasState | null;
 
   version: number;
   created_at: number;
@@ -317,6 +393,25 @@ function handleServerError(res: NextApiResponse, err: unknown) {
     error: "server error",
     details: safeMessage(err),
   } satisfies ApiErrorBody);
+}
+
+/** Fisher-Yates su una copia. */
+function shuffled<T>(arr: T[]): T[] {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function pickRandom<T>(arr: T[]): T | null {
+  if (!arr.length) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function shortId(prefix = "x"): string {
+  return `${prefix}-${crypto.randomBytes(4).toString("hex")}`;
 }
 
 /*
@@ -447,6 +542,29 @@ function toSummary(room: string, state: RoomState): RoomSummary {
   ==================================================
 */
 
+function normalizeExtrasState(value: any): ExtrasState | null {
+  if (!value || typeof value !== "object") return null;
+  const cfg = value.config || {};
+  return {
+    config: {
+      suggestions: Array.isArray(cfg.suggestions) ? cfg.suggestions.map(String) : [],
+      obligations: Array.isArray(cfg.obligations) ? cfg.obligations.map(String) : [],
+      notify_seconds: clampNumber(cfg.notify_seconds, 10, 3, 60),
+    },
+    suggestions_pool: Array.isArray(value.suggestions_pool) ? value.suggestions_pool.map(String) : [],
+    obligations_pool: Array.isArray(value.obligations_pool) ? value.obligations_pool.map(String) : [],
+    used_suggestions_by_writer: (value.used_suggestions_by_writer && typeof value.used_suggestions_by_writer === "object")
+      ? value.used_suggestions_by_writer
+      : {},
+    obligations_log: Array.isArray(value.obligations_log) ? value.obligations_log : [],
+    qa_threads: Array.isArray(value.qa_threads) ? value.qa_threads : [],
+    suggestion_in_flight_until:
+      typeof value.suggestion_in_flight_until === "number"
+        ? value.suggestion_in_flight_until
+        : null,
+  };
+}
+
 function normalizeGroupState(groupId: string, state: GroupState): GroupState {
   const turnNumber = Number(state.turn_number || 0);
   const turnPaused = Boolean(state.turn_paused);
@@ -474,6 +592,7 @@ function normalizeGroupState(groupId: string, state: GroupState): GroupState {
       ? state.submitted_this_turn
       : [],
     status,
+    extras: normalizeExtrasState((state as any).extras),
     version: Number(state.version || 1),
     created_at: Number(state.created_at || now()),
     updated_at: Number(state.updated_at || now()),
@@ -566,6 +685,86 @@ function findAssignedWriterForRoom(group: GroupState, roomName: string): string 
   }
 
   return null;
+}
+
+/*
+  ==================================================
+  EXTRAS HELPERS
+  ==================================================
+*/
+
+/**
+ * Inizializza extras a partire da config + parametri del gruppo.
+ *  - suggestions_pool: NW elementi pescati random dalla lista config (oppure tutta la lista se inferiore).
+ *  - obligations_pool: NO elementi (NW oppure NW-1) pescati random.
+ */
+function buildInitialExtras(
+  cfg: ExtrasConfig,
+  expectedWriters: number,
+  totalTurns: number
+): ExtrasState {
+  const NW = expectedWriters;
+  const NS = NW;
+  const NO = totalTurns > NW ? NW : Math.max(0, NW - 1);
+
+  const suggestions_pool = shuffled(cfg.suggestions).slice(0, Math.min(NS, cfg.suggestions.length));
+  const obligations_pool = shuffled(cfg.obligations).slice(0, Math.min(NO, cfg.obligations.length));
+
+  return {
+    config: cfg,
+    suggestions_pool,
+    obligations_pool,
+    used_suggestions_by_writer: {},
+    obligations_log: [],
+    qa_threads: [],
+    suggestion_in_flight_until: null,
+  };
+}
+
+/**
+ * Sceglie un obbligo per il turno corrente:
+ *  - mai al turno 1
+ *  - max 1 per turno
+ *  - max 1 per writer (writer ineleggibili = quelli già in obligations_log)
+ *  - estrae dal pool e lo rimuove
+ * Mutates `extras`.
+ */
+function maybeAssignObligationForTurn(group: GroupState): ObligationLogEntry | null {
+  const extras = group.extras;
+  if (!extras) return null;
+  if (group.turn_number <= 1) return null;
+  if (!extras.obligations_pool.length) return null;
+
+  const writersWithObligation = new Set(extras.obligations_log.map((e) => e.writer_id));
+  const eligibleWriters = group.writers.filter((w) => !writersWithObligation.has(w));
+  if (!eligibleWriters.length) return null;
+
+  // Evita di duplicare per lo stesso turno (idempotenza)
+  if (extras.obligations_log.some((e) => e.turn === group.turn_number)) return null;
+
+  const writer = pickRandom(eligibleWriters)!;
+  // pop random dal pool
+  const idx = Math.floor(Math.random() * extras.obligations_pool.length);
+  const [obligation_id] = extras.obligations_pool.splice(idx, 1);
+
+  const entry: ObligationLogEntry = {
+    turn: group.turn_number,
+    writer_id: writer,
+    obligation_id,
+    assigned_at: now(),
+  };
+  extras.obligations_log.push(entry);
+  return entry;
+}
+
+function findCurrentObligationFor(group: GroupState, writerId: string): ObligationLogEntry | null {
+  const extras = group.extras;
+  if (!extras) return null;
+  return (
+    extras.obligations_log.find(
+      (e) => e.turn === group.turn_number && e.writer_id === writerId
+    ) || null
+  );
 }
 
 /*
@@ -1152,6 +1351,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         roomNames.push(roomName);
       }
 
+      /*
+        EXTRAS opzionali. Il client passa:
+          extras_config: {
+            suggestions: string[],   // ids attivi
+            obligations: string[],   // ids attivi
+            notify_seconds: number   // 3..60, default 10
+          }
+        Se assente o liste vuote, gli extras restano `null` (feature spenta).
+      */
+      let extras: ExtrasState | null = null;
+      const ec = body.extras_config;
+      if (ec && typeof ec === "object") {
+        const cfg: ExtrasConfig = {
+          suggestions: Array.isArray(ec.suggestions) ? ec.suggestions.map(String).filter(Boolean) : [],
+          obligations: Array.isArray(ec.obligations) ? ec.obligations.map(String).filter(Boolean) : [],
+          notify_seconds: clampNumber(ec.notify_seconds, 10, 3, 60),
+        };
+        if (cfg.suggestions.length || cfg.obligations.length) {
+          extras = buildInitialExtras(cfg, expectedWriters, totalTurns);
+        }
+      }
+
       const groupState: GroupState = {
         group_id: groupId,
         activity_title: activityTitle,
@@ -1167,6 +1388,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         turn_remaining_ms: null,
         submitted_this_turn: [],
         status: "waiting",
+        extras,
         version: 1,
         created_at: now(),
         updated_at: now(),
@@ -1214,11 +1436,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const assignments = computeAssignments(group);
       const assignment_details = computeAssignmentDetails(group);
 
+      /*
+        Per non leakare dati sensibili sugli extras a writer non admin,
+        esponiamo qui solo informazioni neutre (flag notifica + counters).
+        Il dettaglio per-writer va via `group_get_my_extras`.
+        Il dettaglio completo va via `group_su_extras_view` (admin).
+      */
+      const extras_public = group.extras
+        ? {
+            notify_seconds: group.extras.config.notify_seconds,
+            suggestion_in_flight_until: group.extras.suggestion_in_flight_until,
+            suggestions_remaining: group.extras.suggestions_pool.length,
+            obligations_remaining: group.extras.obligations_pool.length,
+          }
+        : null;
+
       return res.json({
         success: true,
         group_state: group,
         assignments,
         assignment_details,
+        extras_public,
         now: now(),
       });
     }
@@ -1391,6 +1629,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       group.turn_ends_at = now() + turnSeconds * 1000;
       group.submitted_this_turn = [];
 
+      // EXTRAS: assegnazione automatica obbligo per il turno (skip turno 1).
+      const obligationAssigned = maybeAssignObligationForTurn(group);
+
       bump(group);
       await saveGroup(group);
 
@@ -1431,6 +1672,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         group_state: group,
         assignments,
         assignment_details: computeAssignmentDetails(group),
+        obligation_assigned: obligationAssigned,
         now: now(),
       });
     }
@@ -1637,7 +1879,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(404).json({ error: "assigned room not found" });
       }
 
-      roomState.story_so_far = (roomState.story_so_far ? `${roomState.story_so_far}\n` : "") + text;
+      /*
+        EXTRAS: se questo writer aveva un obbligo nel turno corrente, appendiamo
+        un marker invisibile (HTML comment) al testo della storia. Verrà filtrato
+        dal client al display ma conservato per la verifica del SU.
+      */
+      let textToAppend = text;
+      const obligationEntry = findCurrentObligationFor(group, writerId);
+      if (obligationEntry) {
+        const marker = `<!--OBL:id=${obligationEntry.obligation_id};writer=${writerId};turn=${obligationEntry.turn}-->`;
+        textToAppend = `${text}\n${marker}`;
+      }
+
+      roomState.story_so_far = (roomState.story_so_far ? `${roomState.story_so_far}\n` : "") + textToAppend;
 
       bump(roomState);
       await saveRoom(targetRoom, roomState);
@@ -1694,6 +1948,170 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       await saveGroup(group);
 
       return res.json({ success: true });
+    }
+
+    /*
+      ==================================================
+      EXTRAS - SUGGERIMENTI / OBBLIGHI / Q&A
+      ==================================================
+    */
+
+    /**
+     * group_request_suggestion
+     *  body: { group_id, writer_id }
+     *  - 1 sola richiesta per writer per l'intera durata del gruppo.
+     *  - Estrae random dal pool e lo rimuove.
+     *  - Marca `suggestion_in_flight_until = now + notify_seconds*1000`
+     *    per la notifica passiva agli altri writer (visibile via group_state).
+     *  - Restituisce SOLO al richiedente l'id estratto.
+     */
+    if (action === "group_request_suggestion") {
+      const groupId = normalizeKey(body.group_id);
+      const writerId = normalizeKey(body.writer_id);
+      const group = await getGroup(groupId);
+
+      if (!group) return res.status(404).json({ error: "group not found" });
+      if (!group.extras) return res.status(409).json({ error: "extras disabled for this group" });
+      if (group.status === "ended") return res.status(409).json({ error: "group ended" });
+      if (!group.writers.includes(writerId)) return res.status(403).json({ error: "writer not in group" });
+
+      if (group.extras.used_suggestions_by_writer[writerId]) {
+        return res.status(409).json({ error: "suggestion already used by this writer" });
+      }
+
+      if (!group.extras.suggestions_pool.length) {
+        return res.status(409).json({ error: "no suggestions left" });
+      }
+
+      const idx = Math.floor(Math.random() * group.extras.suggestions_pool.length);
+      const [suggestion_id] = group.extras.suggestions_pool.splice(idx, 1);
+
+      group.extras.used_suggestions_by_writer[writerId] = {
+        suggestion_id,
+        turn: group.turn_number,
+        used_at: now(),
+      };
+      group.extras.suggestion_in_flight_until = now() + group.extras.config.notify_seconds * 1000;
+
+      bump(group);
+      await saveGroup(group);
+
+      return res.json({
+        success: true,
+        suggestion_id,
+        turn: group.turn_number,
+        notify_seconds: group.extras.config.notify_seconds,
+      });
+    }
+
+    /**
+     * group_get_my_extras
+     *  body: { group_id, writer_id }
+     *  Restituisce lo stato extras visibile a quel writer:
+     *   - suggerimento già usato (id e turno) o null
+     *   - obbligo corrente (entry del log per il turno attuale) o null
+     *   - inbox/outbox Q&A che lo coinvolgono
+     *   - flag notifica passiva
+     */
+    if (action === "group_get_my_extras") {
+      const groupId = normalizeKey(body.group_id);
+      const writerId = normalizeKey(body.writer_id);
+      const group = await getGroup(groupId);
+
+      if (!group) return res.status(404).json({ error: "group not found" });
+      if (!group.writers.includes(writerId)) return res.status(403).json({ error: "writer not in group" });
+
+      if (!group.extras) {
+        return res.json({
+          success: true,
+          enabled: false,
+          suggestion_used: null,
+          current_obligation: null,
+          qa_inbox: [],
+          qa_outbox: [],
+          suggestion_in_flight_until: null,
+          notify_seconds: 0,
+        });
+      }
+
+      const suggestion_used = group.extras.used_suggestions_by_writer[writerId] || null;
+      const current_obligation = findCurrentObligationFor(group, writerId);
+      const qa_inbox = group.extras.qa_threads.filter((m) => m.to_writer === writerId);
+      const qa_outbox = group.extras.qa_threads.filter((m) => m.from_writer === writerId);
+
+      return res.json({
+        success: true,
+        enabled: true,
+        suggestion_used,
+        current_obligation,
+        qa_inbox,
+        qa_outbox,
+        suggestion_in_flight_until: group.extras.suggestion_in_flight_until,
+        notify_seconds: group.extras.config.notify_seconds,
+      });
+    }
+
+    /**
+     * group_send_qa
+     *  body: { group_id, from_writer, to_writer, body, reply_to?, origin_suggestion_id? }
+     *  Mini Q&A privata 1-a-1 fra writer (suggerimenti A3.6/A3.7).
+     *  Vincoli:
+     *   - from_writer e to_writer entrambi nel gruppo
+     *   - from_writer != to_writer
+     *   - body non vuoto (max 500 char)
+     */
+    if (action === "group_send_qa") {
+      const groupId = normalizeKey(body.group_id);
+      const fromWriter = normalizeKey(body.from_writer);
+      const toWriter = normalizeKey(body.to_writer);
+      const text = String(body.body || "").trim().slice(0, 500);
+
+      if (!text) return res.status(400).json({ error: "empty body" });
+      if (fromWriter === toWriter) return res.status(400).json({ error: "cannot send to yourself" });
+
+      const group = await getGroup(groupId);
+      if (!group) return res.status(404).json({ error: "group not found" });
+      if (!group.extras) return res.status(409).json({ error: "extras disabled for this group" });
+      if (!group.writers.includes(fromWriter)) return res.status(403).json({ error: "from_writer not in group" });
+      if (!group.writers.includes(toWriter)) return res.status(403).json({ error: "to_writer not in group" });
+
+      const msg: QaMessage = {
+        id: shortId("qa"),
+        from_writer: fromWriter,
+        to_writer: toWriter,
+        body: text,
+        reply_to: body.reply_to ? String(body.reply_to) : null,
+        origin_suggestion_id: body.origin_suggestion_id ? String(body.origin_suggestion_id) : null,
+        created_at: now(),
+      };
+      group.extras.qa_threads.push(msg);
+
+      bump(group);
+      await saveGroup(group);
+
+      return res.json({ success: true, message: msg });
+    }
+
+    /**
+     * group_su_extras_view
+     *  body: { group_id }   (admin)
+     *  Restituisce l'intero blocco extras + lookup obblighi per turno/writer.
+     *  Pensato per la verifica manuale finale del SU.
+     */
+    if (action === "group_su_extras_view") {
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
+      const groupId = normalizeKey(body.group_id);
+      const group = await getGroup(groupId);
+      if (!group) return res.status(404).json({ error: "group not found" });
+
+      return res.json({
+        success: true,
+        group_id: groupId,
+        writers: group.writers,
+        turn_number: group.turn_number,
+        total_turns: group.total_turns,
+        extras: group.extras || null,
+      });
     }
 
     return res.status(400).json({ error: "unknown action" });

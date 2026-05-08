@@ -8,87 +8,127 @@
 
   Questa API Next/Vercel gestisce:
 
-  1. stanze singole legacy
-  2. gruppi legacy basati su batch di rooms[]
-  3. gruppi V2 con parallelismo reale tra writers
-  4. rotazione round-robin server-side tra writers e stanze
-  5. submit controllato per evitare doppio invio nello stesso turno
-  6. stato gruppo: waiting | active | paused | ended
-  7. CORS per domini ufficiali, nuovo dominio fantas-ia.it, Lovable e localhost
+  1. Stanze singole legacy
+  2. Gruppi legacy basati su batch di rooms[]
+  3. Gruppi V2 con parallelismo reale tra writers
+  4. Rotazione round-robin server-side tra writers e stanze
+  5. Submit controllato per evitare doppio invio nello stesso turno
+  6. Stato gruppo: waiting | active | paused | ended
+  7. CORS per domini ufficiali, fantas-ia.it, Lovable e localhost
   8. FUNZIONI ACCESSORIE COLLABORATIVE (extras):
-       - Suggerimenti su richiesta del writer (1 per writer, casuali, non
-         ripetibili nel gruppo).
-       - Obblighi narrativi assegnati automaticamente dal sistema (max 1 per
-         turno, salta il primo turno, max 1 per writer, non ripetibili).
-       - Mini Q&A privata writer ↔ writer per i suggerimenti che richiedono
-         una domanda al primo writer / al writer precedente.
-       - Log persistente per la verifica manuale finale del SU.
+     - Suggerimenti su richiesta del writer (1 per writer, casuali, non
+       ripetibili nel gruppo).
+     - Obblighi narrativi assegnati automaticamente dal sistema (max 1 per
+       turno, salta il primo turno, max 1 per writer, non ripetibili).
+     - Mini Q&A privata writer ↔ writer.
+     - Log persistente per la verifica manuale finale del SU.
 
+  --------------------------------------------------
+  CHANGELOG (rispetto alla versione precedente)
+  --------------------------------------------------
+
+  - FIX `extras disabled for this group`: `create_group` ora accetta sia il
+    formato CLIENT corrente (`{enabled, suggestions_enabled, suggestions_pool,
+    obligations_enabled, obligations_pool, qa_enabled, notify_seconds?}`) sia
+    il formato legacy (`{suggestions, obligations, notify_seconds}`).
+    Gli extras vengono materializzati in `group.extras` se almeno una delle
+    feature è attiva. Il vecchio bug per cui il client inviava i pool ma
+    `group.extras` restava `null` è risolto.
+
+  - FIX titolo gruppo "grp-xxx": `create_group` ora accetta sia
+    `activity_title` (vecchio) sia `title` (nuovo client).
+
+  - FIX titoli stanze + incipit persi: `create_group` ora accetta
+    `rooms_meta: [{title, incipit}]` oltre a `room_titles: string[]`.
+    L'incipit viene salvato sul `RoomState.incipit` (nuovo campo opzionale)
+    e ritornato dal server.
+
+  - `get_my_assignment` ora ritorna anche `assigned_room_incipit` per
+    permettere al client di mostrare l'incipit nel box "storia in corso".
+
+  - `group_state` espone `extras_public.enabled` per il client.
+
+  - `group_get_my_extras` espone `obligations_remaining` e
+    `suggestions_remaining`.
+
+  - Q&A: filtro `qa_enabled` rispettato lato server (se disabilitato:
+    409 "qa disabled").
+
+  --------------------------------------------------
   MODELLO GRUPPI V2
+  --------------------------------------------------
 
   Regola centrale:
 
     1 gruppo = N writers = N stanze = N link
 
   In ogni turno:
-
     - tutti i writers sono attivi contemporaneamente
     - ogni writer scrive su una stanza diversa
     - ogni stanza ha un solo writer assegnato
     - nessun writer deve restare in attesa se il turno è active
 
   Rotazione round-robin:
-
     room_index(writerIndex, turnNumber) =
       (writerIndex + turnNumber - 1) mod N
 
+  --------------------------------------------------
   EXTRAS (SUGGERIMENTI & OBBLIGHI)
+  --------------------------------------------------
 
-  Lo stato extras è un campo opzionale del GroupState (`extras`) e contiene:
-    - config: liste suggerimenti/obblighi attivi e secondi notifica
-    - suggestions_pool: id ancora estraibili (server pop random)
-    - obligations_pool: id ancora estraibili
-    - used_suggestions_by_writer: writer -> {id, turn} (max 1 per writer)
-    - obligations_log: lista entry {turn, writer_id, obligation_id, assigned_at}
+  Stato `extras` (campo opzionale del GroupState):
+    - config: { enabled, suggestions_enabled, obligations_enabled,
+                qa_enabled, notify_seconds }
+    - suggestions_pool: testi (string) ancora estraibili (server pop random)
+    - obligations_pool: testi (string) ancora estraibili
+    - used_suggestions_by_writer: writer -> {id, text, turn, used_at}
+    - obligations_log: lista {turn, writer_id, obligation_id, text,
+                              assigned_at}
     - qa_threads: messaggi 1-a-1 tra writer
     - suggestion_in_flight_until: timestamp per notifica passiva agli altri
 
+  Gli ID di suggerimenti e obblighi sono autogenerati lato server (s1, s2,
+  ..., o1, o2, ...) per disaccoppiarli dai testi forniti dal SU.
+
   Regole obblighi:
     - Mai assegnati al turno 1.
-    - Da turno 2 in poi: 1 writer per turno, scelto random tra chi non ha
-      ancora ricevuto un obbligo nel gruppo.
+    - Da turno 2: 1 writer per turno, scelto random tra chi non ha ancora
+      ricevuto un obbligo.
     - Quantità totale (NO):
-        NT > NW  ->  NO = NW
-        NT = NW  ->  NO = NW - 1
+        NT > NW    -> NO = NW
+        NT = NW    -> NO = NW - 1
       (almeno un turno resta libero)
 
   Regole suggerimenti:
-    - Pool iniziale = NW elementi pescati dalla lista config.
+    - Pool iniziale = NW elementi pescati random dalla lista config
+      (oppure tutta la lista se inferiore).
     - Estrazione random a richiesta writer; rimosso dal pool.
     - 1 sola richiesta per writer per l'intera durata del gruppo.
 
-  NOTE REDIS / UPSTASH
+  --------------------------------------------------
+  REDIS / UPSTASH
+  --------------------------------------------------
 
   - Redis viene letto tramite Redis.fromEnv().
   - Variabili Vercel richieste:
       UPSTASH_REDIS_REST_URL
       UPSTASH_REDIS_REST_TOKEN
+  - Questo file evita polling lato server: risponde solo alle chiamate
+    ricevute. La riduzione vera dei consumi Redis va completata anche lato
+    client (polling >= 5-10s, stop quando tab nascosta, no chiamate per
+    render React).
+  - Alcune azioni come list_rooms/list_groups fanno più letture Redis;
+    usarle con moderazione lato UI.
 
-  - Questo file evita polling lato server: risponde solo alle chiamate ricevute.
-    La riduzione vera dei consumi Redis va completata anche lato client:
-      - polling non sotto 5-10 secondi
-      - stop polling quando tab non visibile
-      - evitare chiamate a ogni render React
-
-  - Alcune azioni come list_rooms/list_groups fanno più letture Redis.
-    Usarle con moderazione lato UI.
-
+  --------------------------------------------------
   SICUREZZA
+  --------------------------------------------------
 
   - Le azioni amministrative richiedono Bearer token ADMIN.
-  - Le action extras writer-side (group_request_suggestion, group_get_my_extras,
-    group_send_qa) sono pubbliche ma vincolate al fatto che il writer_id sia
-    presente nel gruppo. Nessun PII oltre il writer_id.
+  - Le action extras writer-side (group_request_suggestion,
+    group_get_my_extras, group_send_qa) sono pubbliche ma vincolate al
+    fatto che il writer_id sia presente nel gruppo. Nessun PII oltre il
+    writer_id.
   - Nessun log di token o credenziali.
 */
 
@@ -165,6 +205,8 @@ type RoomState = {
   activity_title: string;
   room_mode: RoomMode;
   prompt_seed: string;
+  /** incipit suggerito dal SU per questa stanza (mostrato come contesto). */
+  incipit?: string;
   story_so_far: string;
   writers: string[];
   current_writer_index: number;
@@ -198,21 +240,26 @@ type RoomSummary = {
 
 type GroupStatus = "waiting" | "active" | "paused" | "ended";
 
-/*
-  ----- EXTRAS TYPES -----
-*/
+/*  ----- EXTRAS TYPES -----  */
 
 type ExtrasConfig = {
-  /** ids dei suggerimenti attivi per il gruppo (lista canonica vive lato client) */
-  suggestions: string[];
-  /** ids degli obblighi attivi per il gruppo */
-  obligations: string[];
+  enabled: boolean;
+  suggestions_enabled: boolean;
+  obligations_enabled: boolean;
+  qa_enabled: boolean;
   /** secondi di notifica "Suggerimento richiesto" mostrata agli altri writer */
   notify_seconds: number;
 };
 
+/** Pool item: id stabile + testo originale (mostrato al writer/SU). */
+type PoolItem = {
+  id: string;
+  text: string;
+};
+
 type SuggestionUse = {
   suggestion_id: string;
+  text: string;
   turn: number;
   used_at: number;
 };
@@ -221,6 +268,7 @@ type ObligationLogEntry = {
   turn: number;
   writer_id: string;
   obligation_id: string;
+  text: string;
   assigned_at: number;
 };
 
@@ -229,21 +277,18 @@ type QaMessage = {
   from_writer: string;
   to_writer: string;
   body: string;
-  /** id del messaggio cui si risponde, opzionale */
   reply_to?: string | null;
-  /** suggerimento di origine (per tracciabilità), opzionale */
   origin_suggestion_id?: string | null;
   created_at: number;
 };
 
 type ExtrasState = {
   config: ExtrasConfig;
-  suggestions_pool: string[];
-  obligations_pool: string[];
+  suggestions_pool: PoolItem[];
+  obligations_pool: PoolItem[];
   used_suggestions_by_writer: Record<string, SuggestionUse>;
   obligations_log: ObligationLogEntry[];
   qa_threads: QaMessage[];
-  /** timestamp epoch ms fino al quale gli altri writer mostrano la notifica passiva */
   suggestion_in_flight_until: number | null;
 };
 
@@ -267,7 +312,7 @@ type GroupState = {
   submitted_this_turn: string[];
   status: GroupStatus;
 
-  /** opzionale: presente solo se il gruppo è stato creato con extras_config */
+  /** opzionale: presente solo se il gruppo è stato creato con extras attivi */
   extras?: ExtrasState | null;
 
   version: number;
@@ -385,7 +430,7 @@ function handleServerError(res: NextApiResponse, err: unknown) {
     return res.status(429).json({
       error: "Redis usage limit reached",
       details:
-        "Il database Redis/Upstash ha raggiunto il limite di utilizzo. Ridurre il polling o usare un database/piano adeguato.",
+        "Il database Redis/Upstash ha raggiunto il limite di utilizzo. Ridurre il polling o usare un piano adeguato.",
     } satisfies ApiErrorBody);
   }
 
@@ -452,7 +497,11 @@ function verifyAdmin(req: NextApiRequest): boolean {
   try {
     const payload = JSON.parse(Buffer.from(payloadEncoded, "base64url").toString());
 
-    return payload.role === "ADMIN" && typeof payload.exp === "number" && payload.exp * 1000 > now();
+    return (
+      payload.role === "ADMIN" &&
+      typeof payload.exp === "number" &&
+      payload.exp * 1000 > now()
+    );
   } catch {
     return false;
   }
@@ -470,6 +519,7 @@ function normalizeRoomState(room: string, state: RoomState): RoomState {
     activity_title: state.activity_title || state.room_name || room,
     room_mode: normalizeRoomMode(state.room_mode),
     prompt_seed: String(state.prompt_seed || ""),
+    incipit: typeof state.incipit === "string" ? state.incipit : "",
     story_so_far: String(state.story_so_far || ""),
     writers: Array.isArray(state.writers) ? state.writers : [],
     current_writer_index: Number.isFinite(Number(state.current_writer_index))
@@ -542,20 +592,46 @@ function toSummary(room: string, state: RoomState): RoomSummary {
   ==================================================
 */
 
+function normalizePoolItem(value: any, fallbackPrefix: string, idx: number): PoolItem | null {
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text) return null;
+    return { id: `${fallbackPrefix}${idx + 1}`, text };
+  }
+  if (value && typeof value === "object") {
+    const text = String(value.text || "").trim();
+    if (!text) return null;
+    const id = String(value.id || `${fallbackPrefix}${idx + 1}`);
+    return { id, text };
+  }
+  return null;
+}
+
+function normalizePoolArray(value: any, prefix: string): PoolItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((v, i) => normalizePoolItem(v, prefix, i))
+    .filter((x): x is PoolItem => !!x);
+}
+
 function normalizeExtrasState(value: any): ExtrasState | null {
   if (!value || typeof value !== "object") return null;
   const cfg = value.config || {};
+  const config: ExtrasConfig = {
+    enabled: cfg.enabled !== false,
+    suggestions_enabled: !!cfg.suggestions_enabled,
+    obligations_enabled: !!cfg.obligations_enabled,
+    qa_enabled: !!cfg.qa_enabled,
+    notify_seconds: clampNumber(cfg.notify_seconds, 10, 3, 60),
+  };
   return {
-    config: {
-      suggestions: Array.isArray(cfg.suggestions) ? cfg.suggestions.map(String) : [],
-      obligations: Array.isArray(cfg.obligations) ? cfg.obligations.map(String) : [],
-      notify_seconds: clampNumber(cfg.notify_seconds, 10, 3, 60),
-    },
-    suggestions_pool: Array.isArray(value.suggestions_pool) ? value.suggestions_pool.map(String) : [],
-    obligations_pool: Array.isArray(value.obligations_pool) ? value.obligations_pool.map(String) : [],
-    used_suggestions_by_writer: (value.used_suggestions_by_writer && typeof value.used_suggestions_by_writer === "object")
-      ? value.used_suggestions_by_writer
-      : {},
+    config,
+    suggestions_pool: normalizePoolArray(value.suggestions_pool, "s"),
+    obligations_pool: normalizePoolArray(value.obligations_pool, "o"),
+    used_suggestions_by_writer:
+      value.used_suggestions_by_writer && typeof value.used_suggestions_by_writer === "object"
+        ? value.used_suggestions_by_writer
+        : {},
     obligations_log: Array.isArray(value.obligations_log) ? value.obligations_log : [],
     qa_threads: Array.isArray(value.qa_threads) ? value.qa_threads : [],
     suggestion_in_flight_until:
@@ -694,26 +770,90 @@ function findAssignedWriterForRoom(group: GroupState, roomName: string): string 
 */
 
 /**
- * Inizializza extras a partire da config + parametri del gruppo.
- *  - suggestions_pool: NW elementi pescati random dalla lista config (oppure tutta la lista se inferiore).
- *  - obligations_pool: NO elementi (NW oppure NW-1) pescati random.
+ * Costruisce ExtrasConfig + pool a partire dal body del client.
+ *
+ * Accetta DUE formati:
+ *
+ * Formato CLIENT corrente:
+ *   {
+ *     enabled: bool,
+ *     suggestions_enabled: bool,
+ *     suggestions_pool: string[] | PoolItem[],
+ *     obligations_enabled: bool,
+ *     obligations_pool: string[] | PoolItem[],
+ *     qa_enabled: bool,
+ *     notify_seconds?: number
+ *   }
+ *
+ * Formato LEGACY (vecchio):
+ *   {
+ *     suggestions: string[],
+ *     obligations: string[],
+ *     notify_seconds?: number
+ *   }
+ *
+ * Ritorna `null` se gli extras non vanno attivati (master switch off,
+ * oppure nessuna feature accesa).
  */
-function buildInitialExtras(
-  cfg: ExtrasConfig,
+function parseExtrasConfigFromBody(
+  ec: any,
   expectedWriters: number,
   totalTurns: number
-): ExtrasState {
-  const NW = expectedWriters;
-  const NS = NW;
-  const NO = totalTurns > NW ? NW : Math.max(0, NW - 1);
+): ExtrasState | null {
+  if (!ec || typeof ec !== "object") return null;
 
-  const suggestions_pool = shuffled(cfg.suggestions).slice(0, Math.min(NS, cfg.suggestions.length));
-  const obligations_pool = shuffled(cfg.obligations).slice(0, Math.min(NO, cfg.obligations.length));
+  // Master switch: il client esplicito vince. Se non passato, attiviamo solo
+  // se almeno una sotto-feature è esplicitamente true OPPURE c'è un pool.
+  const explicitlyEnabled = ec.enabled !== undefined ? !!ec.enabled : null;
+
+  // Sotto-flag: rispetta il client se passati, altrimenti deduci da pool.
+  const rawSuggestions =
+    ec.suggestions_pool ?? ec.suggestions ?? null;
+  const rawObligations =
+    ec.obligations_pool ?? ec.obligations ?? null;
+
+  const suggestionsPool = normalizePoolArray(rawSuggestions, "s");
+  const obligationsPool = normalizePoolArray(rawObligations, "o");
+
+  const suggestions_enabled =
+    ec.suggestions_enabled !== undefined
+      ? !!ec.suggestions_enabled
+      : suggestionsPool.length > 0;
+  const obligations_enabled =
+    ec.obligations_enabled !== undefined
+      ? !!ec.obligations_enabled
+      : obligationsPool.length > 0;
+  const qa_enabled = !!ec.qa_enabled;
+
+  const anyFeature = suggestions_enabled || obligations_enabled || qa_enabled;
+  const enabled = explicitlyEnabled !== null ? explicitlyEnabled : anyFeature;
+
+  if (!enabled || !anyFeature) return null;
+
+  const config: ExtrasConfig = {
+    enabled: true,
+    suggestions_enabled,
+    obligations_enabled,
+    qa_enabled,
+    notify_seconds: clampNumber(ec.notify_seconds, 10, 3, 60),
+  };
+
+  // Dimensiona i pool secondo le regole.
+  const NW = expectedWriters;
+  const NS = NW; // suggerimenti = NW
+  const NO = totalTurns > NW ? NW : Math.max(0, NW - 1); // obblighi
+
+  const finalSuggestions = suggestions_enabled
+    ? shuffled(suggestionsPool).slice(0, Math.min(NS, suggestionsPool.length))
+    : [];
+  const finalObligations = obligations_enabled
+    ? shuffled(obligationsPool).slice(0, Math.min(NO, obligationsPool.length))
+    : [];
 
   return {
-    config: cfg,
-    suggestions_pool,
-    obligations_pool,
+    config,
+    suggestions_pool: finalSuggestions,
+    obligations_pool: finalObligations,
     used_suggestions_by_writer: {},
     obligations_log: [],
     qa_threads: [],
@@ -732,6 +872,7 @@ function buildInitialExtras(
 function maybeAssignObligationForTurn(group: GroupState): ObligationLogEntry | null {
   const extras = group.extras;
   if (!extras) return null;
+  if (!extras.config.obligations_enabled) return null;
   if (group.turn_number <= 1) return null;
   if (!extras.obligations_pool.length) return null;
 
@@ -739,25 +880,28 @@ function maybeAssignObligationForTurn(group: GroupState): ObligationLogEntry | n
   const eligibleWriters = group.writers.filter((w) => !writersWithObligation.has(w));
   if (!eligibleWriters.length) return null;
 
-  // Evita di duplicare per lo stesso turno (idempotenza)
+  // Idempotenza: già un obbligo per questo turno? skip
   if (extras.obligations_log.some((e) => e.turn === group.turn_number)) return null;
 
   const writer = pickRandom(eligibleWriters)!;
-  // pop random dal pool
   const idx = Math.floor(Math.random() * extras.obligations_pool.length);
-  const [obligation_id] = extras.obligations_pool.splice(idx, 1);
+  const [picked] = extras.obligations_pool.splice(idx, 1);
 
   const entry: ObligationLogEntry = {
     turn: group.turn_number,
     writer_id: writer,
-    obligation_id,
+    obligation_id: picked.id,
+    text: picked.text,
     assigned_at: now(),
   };
   extras.obligations_log.push(entry);
   return entry;
 }
 
-function findCurrentObligationFor(group: GroupState, writerId: string): ObligationLogEntry | null {
+function findCurrentObligationFor(
+  group: GroupState,
+  writerId: string
+): ObligationLogEntry | null {
   const extras = group.extras;
   if (!extras) return null;
   return (
@@ -818,27 +962,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     */
 
     if (action === "status") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
-
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
       return res.json({ success: true, now: now() });
     }
 
     if (action === "list_rooms") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const ids = (await redis.smembers<string[]>(KEY_ROOMS_SET)) || [];
       const rooms: RoomSummary[] = [];
 
       for (const id of ids) {
         const state = await getRoom(id, true);
-
-        if (state) {
-          rooms.push(toSummary(id, state));
-        }
+        if (state) rooms.push(toSummary(id, state));
       }
 
       rooms.sort((a, b) => b.updated_at - a.updated_at);
@@ -847,9 +983,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (action === "create") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const room = normalizeKey(body.room_name) || crypto.randomBytes(3).toString("hex");
       const ttlHours = clampNumber(body.ttl_h, 12, 1, 24);
@@ -860,6 +994,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         activity_title: String(body.activity_title || room).trim(),
         room_mode: normalizeRoomMode(body.room_mode),
         prompt_seed: "",
+        incipit: "",
         story_so_far: "",
         writers: [],
         current_writer_index: 0,
@@ -882,9 +1017,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const room = normalizeKey(body.room);
       const state = await getRoom(room);
 
-      if (!state) {
-        return res.status(404).json({ error: "room not found" });
-      }
+      if (!state) return res.status(404).json({ error: "room not found" });
 
       const writer = `Writer ${state.writers.length + 1}`;
 
@@ -897,20 +1030,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (action === "next_turn") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const room = normalizeKey(body.room);
       const state = await getRoom(room);
 
-      if (!state) {
-        return res.status(404).json({ error: "room not found" });
-      }
-
-      if (!state.writers.length) {
-        return res.status(409).json({ error: "no writers yet" });
-      }
+      if (!state) return res.status(404).json({ error: "room not found" });
+      if (!state.writers.length) return res.status(409).json({ error: "no writers yet" });
 
       const turnSeconds = clampNumber(body.turn_s, 180, 15, 600);
 
@@ -926,24 +1052,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (action === "pause_turn") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const room = normalizeKey(body.room);
       const state = await getRoom(room);
 
-      if (!state) {
-        return res.status(404).json({ error: "room not found" });
-      }
-
-      if (state.turn_paused) {
-        return res.status(409).json({ error: "already paused" });
-      }
-
-      if (state.turn_ends_at == null) {
-        return res.status(409).json({ error: "no active turn" });
-      }
+      if (!state) return res.status(404).json({ error: "room not found" });
+      if (state.turn_paused) return res.status(409).json({ error: "already paused" });
+      if (state.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
 
       const remaining = Math.max(0, state.turn_ends_at - now());
 
@@ -958,22 +1074,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (action === "resume_turn") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const room = normalizeKey(body.room);
-
-      if (!room) {
-        return res.status(400).json({ error: "missing room" });
-      }
+      if (!room) return res.status(400).json({ error: "missing room" });
 
       const state = await getRoom(room);
-
-      if (!state) {
-        return res.status(404).json({ error: "room not found" });
-      }
-
+      if (!state) return res.status(404).json({ error: "room not found" });
       if (!state.turn_paused || state.turn_remaining_ms == null) {
         return res.status(409).json({ error: "not paused" });
       }
@@ -984,10 +1091,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         state.turn_paused = false;
         state.turn_remaining_ms = null;
         state.turn_ends_at = null;
-
         bump(state);
         await saveRoom(room, state);
-
         return res.status(409).json({ error: "no remaining time" });
       }
 
@@ -1005,49 +1110,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const room = normalizeKey(body.room);
       const state = await getRoom(room);
 
-      if (!state) {
-        return res.status(404).json({ error: "room not found" });
-      }
-
-      if (now() > state.expires_at) {
-        return res.status(410).json({ error: "room expired" });
-      }
+      if (!state) return res.status(404).json({ error: "room not found" });
+      if (now() > state.expires_at) return res.status(410).json({ error: "room expired" });
 
       const writerId = normalizeKey(body.writer_id);
-
-      if (!writerId) {
-        return res.status(400).json({ error: "missing writer_id" });
-      }
+      if (!writerId) return res.status(400).json({ error: "missing writer_id" });
 
       const writerIndex = state.writers.indexOf(writerId);
-
-      if (writerIndex < 0) {
-        return res.status(403).json({ error: "writer not in room" });
-      }
+      if (writerIndex < 0) return res.status(403).json({ error: "writer not in room" });
 
       const currentWriter = state.writers[state.current_writer_index];
+      if (writerId !== currentWriter) return res.status(403).json({ error: "not your turn" });
 
-      if (writerId !== currentWriter) {
-        return res.status(403).json({ error: "not your turn" });
-      }
-
-      if (state.turn_paused) {
-        return res.status(409).json({ error: "turn paused" });
-      }
-
-      if (state.turn_ends_at == null) {
-        return res.status(409).json({ error: "no active turn" });
-      }
-
-      if (state.turn_ends_at <= now()) {
-        return res.status(409).json({ error: "turn expired" });
-      }
+      if (state.turn_paused) return res.status(409).json({ error: "turn paused" });
+      if (state.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
+      if (state.turn_ends_at <= now()) return res.status(409).json({ error: "turn expired" });
 
       const text = String(body.text || "").trim();
-
-      if (!text) {
-        return res.status(400).json({ error: "empty text" });
-      }
+      if (!text) return res.status(400).json({ error: "empty text" });
 
       state.story_so_far = (state.story_so_far ? `${state.story_so_far}\n` : "") + text;
       state.turn_ends_at = null;
@@ -1061,16 +1141,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (action === "delete_room") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin required" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin required" });
 
       const room = normalizeKey(body.room);
       const state = await getRoom(room);
-
-      if (!state) {
-        return res.json({ success: true });
-      }
+      if (!state) return res.json({ success: true });
 
       state.expires_at = now() - 1;
       state.turn_paused = true;
@@ -1086,31 +1161,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (action === "get_state") {
       const room = normalizeKey(body.room);
       const state = await getRoom(room);
-
-      if (!state) {
-        return res.status(404).json({ error: "room not found" });
-      }
-
+      if (!state) return res.status(404).json({ error: "room not found" });
       return res.json({ success: true, room_state: state });
     }
 
     /*
       ==================================================
-      GROUP LEGACY
-      Batch su rooms[].
+      GROUP LEGACY (batch su rooms[])
       ==================================================
     */
 
     if (action === "group_next_turn") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const rooms = parseRoomsArray(body.rooms);
-
-      if (!rooms.length) {
-        return res.status(400).json({ error: "missing rooms[]" });
-      }
+      if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
 
       const turnSeconds = clampNumber(body.turn_s, 180, 15, 600);
       const results: GroupResult[] = [];
@@ -1118,18 +1183,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       for (const room of rooms) {
         try {
           const state = await getRoom(room);
-
           if (!state) {
             results.push({ room, ok: false, status: 404, error: "room not found" });
             continue;
           }
-
           if (!state.writers.length) {
             results.push({ room, ok: false, status: 409, error: "no writers yet" });
             continue;
           }
 
-          state.current_writer_index = (state.current_writer_index + 1) % state.writers.length;
+          state.current_writer_index =
+            (state.current_writer_index + 1) % state.writers.length;
           state.turn_paused = false;
           state.turn_remaining_ms = null;
           state.turn_ends_at = now() + turnSeconds * 1000;
@@ -1143,36 +1207,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       }
 
-      return res.json({ success: results.every((result) => result.ok), results, now: now() });
+      return res.json({ success: results.every((r) => r.ok), results, now: now() });
     }
 
     if (action === "group_pause_turn") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const rooms = parseRoomsArray(body.rooms);
-
-      if (!rooms.length) {
-        return res.status(400).json({ error: "missing rooms[]" });
-      }
+      if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
 
       const results: GroupResult[] = [];
 
       for (const room of rooms) {
         try {
           const state = await getRoom(room);
-
           if (!state) {
             results.push({ room, ok: false, status: 404, error: "room not found" });
             continue;
           }
-
           if (state.turn_paused) {
             results.push({ room, ok: false, status: 409, error: "already paused" });
             continue;
           }
-
           if (state.turn_ends_at == null) {
             results.push({ room, ok: false, status: 409, error: "no active turn" });
             continue;
@@ -1193,38 +1249,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       }
 
-      return res.json({ success: results.every((result) => result.ok), results, now: now() });
+      return res.json({ success: results.every((r) => r.ok), results, now: now() });
     }
 
     if (action === "group_resume_turn") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const rooms = parseRoomsArray(body.rooms);
-
-      if (!rooms.length) {
-        return res.status(400).json({ error: "missing rooms[]" });
-      }
+      if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
 
       const results: GroupResult[] = [];
 
       for (const room of rooms) {
         try {
           const state = await getRoom(room);
-
           if (!state) {
             results.push({ room, ok: false, status: 404, error: "room not found" });
             continue;
           }
-
           if (!state.turn_paused || state.turn_remaining_ms == null) {
             results.push({ room, ok: false, status: 409, error: "not paused" });
             continue;
           }
 
           const remaining = Math.max(0, Number(state.turn_remaining_ms) || 0);
-
           if (remaining <= 0) {
             results.push({ room, ok: false, status: 409, error: "no remaining time" });
             continue;
@@ -1243,26 +1291,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       }
 
-      return res.json({ success: results.every((result) => result.ok), results, now: now() });
+      return res.json({ success: results.every((r) => r.ok), results, now: now() });
     }
 
     if (action === "group_delete_room") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const rooms = parseRoomsArray(body.rooms);
-
-      if (!rooms.length) {
-        return res.status(400).json({ error: "missing rooms[]" });
-      }
+      if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
 
       const results: GroupResult[] = [];
 
       for (const room of rooms) {
         try {
           const state = await getRoom(room);
-
           if (!state) {
             results.push({ room, ok: true, status: 200 });
             continue;
@@ -1282,7 +1324,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       }
 
-      return res.json({ success: results.every((result) => result.ok), results, now: now() });
+      return res.json({ success: results.every((r) => r.ok), results, now: now() });
     }
 
     /*
@@ -1292,9 +1334,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     */
 
     if (action === "create_group") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const expectedWriters = clampNumber(body.expected_writers, 0, 2, 20);
 
@@ -1313,27 +1353,47 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const ttlHours = clampNumber(body.ttl_h, 12, 1, 24);
       const expiresAt = now() + ttlHours * 3600 * 1000;
       const groupId = `grp-${crypto.randomBytes(3).toString("hex")}`;
-      const activityTitle = String(body.activity_title || groupId).trim();
+
+      // Accetta sia il vecchio `activity_title` sia il nuovo `title`.
+      const activityTitle = String(
+        body.title || body.activity_title || groupId
+      ).trim() || groupId;
+
       const roomMode = normalizeRoomMode(body.room_mode);
       const promptSeed = String(body.prompt_seed || "").trim();
 
       /*
-        Titoli stanze:
-        - Se il client manda room_titles[], li usiamo.
-        - Altrimenti manteniamo il comportamento precedente: activity_title #i.
+        Titoli + incipit stanze.
+        Accettiamo:
+          - body.rooms_meta = [{title, incipit}]   (NUOVO)
+          - body.room_titles = string[]             (LEGACY)
+        Se entrambi mancanti → activity_title #i.
       */
-      const inputTitles = Array.isArray(body.room_titles) ? body.room_titles : [];
+      const roomsMeta: Array<{ title?: string; incipit?: string }> = Array.isArray(
+        body.rooms_meta
+      )
+        ? body.rooms_meta
+        : [];
+      const inputTitles: string[] = Array.isArray(body.room_titles)
+        ? body.room_titles
+        : [];
+
       const roomNames: string[] = [];
 
       for (let i = 1; i <= expectedWriters; i++) {
         const roomName = `${groupId}-${i}`;
-        const roomTitle = String(inputTitles[i - 1] || `${activityTitle} #${i}`).trim();
+        const meta = roomsMeta[i - 1] || {};
+        const roomTitle =
+          String(meta.title || inputTitles[i - 1] || `${activityTitle} #${i}`).trim() ||
+          `Stanza ${i}`;
+        const roomIncipit = String(meta.incipit || "").trim();
 
         const roomState: RoomState = {
           room_name: roomName,
           activity_title: roomTitle,
           room_mode: roomMode,
           prompt_seed: promptSeed,
+          incipit: roomIncipit,
           story_so_far: "",
           writers: [],
           current_writer_index: 0,
@@ -1351,27 +1411,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         roomNames.push(roomName);
       }
 
-      /*
-        EXTRAS opzionali. Il client passa:
-          extras_config: {
-            suggestions: string[],   // ids attivi
-            obligations: string[],   // ids attivi
-            notify_seconds: number   // 3..60, default 10
-          }
-        Se assente o liste vuote, gli extras restano `null` (feature spenta).
-      */
-      let extras: ExtrasState | null = null;
-      const ec = body.extras_config;
-      if (ec && typeof ec === "object") {
-        const cfg: ExtrasConfig = {
-          suggestions: Array.isArray(ec.suggestions) ? ec.suggestions.map(String).filter(Boolean) : [],
-          obligations: Array.isArray(ec.obligations) ? ec.obligations.map(String).filter(Boolean) : [],
-          notify_seconds: clampNumber(ec.notify_seconds, 10, 3, 60),
-        };
-        if (cfg.suggestions.length || cfg.obligations.length) {
-          extras = buildInitialExtras(cfg, expectedWriters, totalTurns);
-        }
-      }
+      // EXTRAS opzionali. Vedi parseExtrasConfigFromBody per i formati accettati.
+      const extras = parseExtrasConfigFromBody(
+        body.extras_config,
+        expectedWriters,
+        totalTurns
+      );
 
       const groupState: GroupState = {
         group_id: groupId,
@@ -1405,19 +1450,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (action === "list_groups") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const ids = (await redis.smembers<string[]>(KEY_GROUPS_SET)) || [];
       const groups: GroupState[] = [];
 
       for (const id of ids) {
         const group = await getGroup(id, true);
-
-        if (group) {
-          groups.push(group);
-        }
+        if (group) groups.push(group);
       }
 
       groups.sort((a, b) => b.updated_at - a.updated_at);
@@ -1429,27 +1469,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const groupId = normalizeKey(body.group_id);
       const group = await getGroup(groupId);
 
-      if (!group) {
-        return res.status(404).json({ error: "group not found" });
-      }
+      if (!group) return res.status(404).json({ error: "group not found" });
 
       const assignments = computeAssignments(group);
       const assignment_details = computeAssignmentDetails(group);
 
       /*
-        Per non leakare dati sensibili sugli extras a writer non admin,
-        esponiamo qui solo informazioni neutre (flag notifica + counters).
+        Per non leakare dati sensibili, esponiamo flag pubblici.
         Il dettaglio per-writer va via `group_get_my_extras`.
         Il dettaglio completo va via `group_su_extras_view` (admin).
       */
       const extras_public = group.extras
         ? {
+            enabled: group.extras.config.enabled,
+            suggestions_enabled: group.extras.config.suggestions_enabled,
+            obligations_enabled: group.extras.config.obligations_enabled,
+            qa_enabled: group.extras.config.qa_enabled,
             notify_seconds: group.extras.config.notify_seconds,
             suggestion_in_flight_until: group.extras.suggestion_in_flight_until,
             suggestions_remaining: group.extras.suggestions_pool.length,
             obligations_remaining: group.extras.obligations_pool.length,
           }
-        : null;
+        : { enabled: false };
 
       return res.json({
         success: true,
@@ -1465,19 +1506,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const groupId = normalizeKey(body.group_id);
       const group = await getGroup(groupId);
 
-      if (!group) {
-        return res.status(404).json({ error: "group not found" });
-      }
-
-      if (group.status === "ended") {
-        return res.status(409).json({ error: "group ended" });
-      }
-
+      if (!group) return res.status(404).json({ error: "group not found" });
+      if (group.status === "ended") return res.status(409).json({ error: "group ended" });
       if (group.writers.length >= group.expected_writers) {
         return res.status(409).json({ error: "group full" });
       }
 
-      const writerId = normalizeKey(body.writer_id) || `Writer ${group.writers.length + 1}`;
+      const writerId =
+        normalizeKey(body.writer_id) || `Writer ${group.writers.length + 1}`;
 
       if (group.writers.includes(writerId)) {
         return res.json({ success: true, writer_id: writerId, group_state: group });
@@ -1485,21 +1521,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       group.writers.push(writerId);
       bump(group);
-
       await saveGroup(group);
 
-      /*
-        Per compatibilità con UI legacy, ogni stanza contiene l'elenco completo
-        dei writers del gruppo. L'assegnazione attiva NON è decisa qui, ma
-        da computeAssignments().
-      */
+      // Ogni stanza contiene l'elenco writers (compat UI legacy).
       for (const roomName of group.rooms) {
         const roomState = await getRoom(roomName);
-
-        if (!roomState) {
-          continue;
-        }
-
+        if (!roomState) continue;
         if (!roomState.writers.includes(writerId)) {
           roomState.writers.push(writerId);
           bump(roomState);
@@ -1515,33 +1542,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const writerId = normalizeKey(body.writer_id);
       const group = await getGroup(groupId);
 
-      if (!group) {
-        return res.status(404).json({ error: "group not found" });
-      }
+      if (!group) return res.status(404).json({ error: "group not found" });
 
       const writerIndex = group.writers.indexOf(writerId);
-
-      if (writerIndex < 0) {
-        return res.status(403).json({ error: "writer not in group" });
-      }
+      if (writerIndex < 0) return res.status(403).json({ error: "writer not in group" });
 
       const assignments = computeAssignments(group);
       const assignedRoom = assignments[writerId] || null;
       const assignedRoomState = assignedRoom ? await getRoom(assignedRoom) : null;
       const hasSubmitted = group.submitted_this_turn.includes(writerId);
 
-      /*
-        Correzione importante:
-        Il writer può scrivere se:
-        - gruppo active
-        - turno avviato
-        - gruppo non in pausa
-        - writer non ha già inviato nel turno
-
-        Non blocchiamo qui sul tempo scaduto per evitare il bug "writer in attesa"
-        causato da disallineamenti UI/timer. La scadenza reale viene comunque
-        verificata in group_submit_text.
-      */
       const isMyTurn =
         group.status === "active" &&
         !group.turn_paused &&
@@ -1552,6 +1562,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         success: true,
         assigned_room: assignedRoom,
         assigned_room_title: assignedRoomState?.activity_title || assignedRoom,
+        assigned_room_incipit: assignedRoomState?.incipit || "",
         room_state: assignedRoomState || null,
         turn_number: group.turn_number,
         total_turns: group.total_turns,
@@ -1562,26 +1573,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         has_submitted: hasSubmitted,
         is_my_turn: isMyTurn,
         writer_id: writerId,
+        writer_index: writerIndex,
         group_id: groupId,
       });
     }
 
     if (action === "group_advance_turn") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const groupId = normalizeKey(body.group_id);
       const group = await getGroup(groupId);
 
-      if (!group) {
-        return res.status(404).json({ error: "group not found" });
-      }
-
+      if (!group) return res.status(404).json({ error: "group not found" });
       if (group.status === "ended") {
         return res.json({ success: true, group_state: group, ended: true });
       }
-
       if (group.writers.length < group.expected_writers) {
         return res.status(409).json({
           error: "waiting for writers",
@@ -1604,10 +1610,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         for (const roomName of group.rooms) {
           const roomState = await getRoom(roomName);
-
-          if (!roomState) {
-            continue;
-          }
+          if (!roomState) continue;
 
           roomState.turn_ends_at = null;
           roomState.turn_paused = false;
@@ -1629,7 +1632,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       group.turn_ends_at = now() + turnSeconds * 1000;
       group.submitted_this_turn = [];
 
-      // EXTRAS: assegnazione automatica obbligo per il turno (skip turno 1).
+      // EXTRAS: assegna obbligo per il turno (skip turno 1).
       const obligationAssigned = maybeAssignObligationForTurn(group);
 
       bump(group);
@@ -1637,23 +1640,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const assignments = computeAssignments(group);
 
-      /*
-        Allineamento stanze:
-        - ogni stanza riceve lo stesso timer del gruppo
-        - current_writer_index viene impostato sul writer assegnato a quella stanza
-      */
       for (const roomName of group.rooms) {
         const roomState = await getRoom(roomName);
-
-        if (!roomState) {
-          continue;
-        }
+        if (!roomState) continue;
 
         const assignedWriter = findAssignedWriterForRoom(group, roomName);
-
         if (assignedWriter) {
           const writerIndex = roomState.writers.indexOf(assignedWriter);
-
           if (writerIndex >= 0) {
             roomState.current_writer_index = writerIndex;
           }
@@ -1678,22 +1671,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (action === "group_force_next_turn") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      // Mantenuto per retro-compatibilità (il client unificato non lo usa più).
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const groupId = normalizeKey(body.group_id);
       const group = await getGroup(groupId);
-
-      if (!group) {
-        return res.status(404).json({ error: "group not found" });
-      }
+      if (!group) return res.status(404).json({ error: "group not found" });
 
       let turnSeconds = 180;
-
       if (group.turn_ends_at && !group.turn_paused) {
         const remaining = Math.max(0, group.turn_ends_at - now());
-
         if (remaining > 0) {
           turnSeconds = Math.max(15, Math.round(remaining / 1000));
         }
@@ -1701,37 +1688,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       body.action = "group_advance_turn";
       body.turn_s = turnSeconds;
-
-      /*
-        Manteniamo compatibilità con il comportamento esistente:
-        questa funzione richiama lo stesso handler con action modificata.
-      */
       return handler(req, res);
     }
 
     if (action === "group_pause") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const groupId = normalizeKey(body.group_id);
       const group = await getGroup(groupId);
 
-      if (!group) {
-        return res.status(404).json({ error: "group not found" });
-      }
-
-      if (group.status === "ended") {
-        return res.status(409).json({ error: "group ended" });
-      }
-
-      if (group.turn_paused) {
-        return res.status(409).json({ error: "already paused" });
-      }
-
-      if (group.turn_ends_at == null) {
-        return res.status(409).json({ error: "no active turn" });
-      }
+      if (!group) return res.status(404).json({ error: "group not found" });
+      if (group.status === "ended") return res.status(409).json({ error: "group ended" });
+      if (group.turn_paused) return res.status(409).json({ error: "already paused" });
+      if (group.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
 
       const remaining = Math.max(0, group.turn_ends_at - now());
 
@@ -1745,10 +1714,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       for (const roomName of group.rooms) {
         const roomState = await getRoom(roomName);
-
-        if (!roomState) {
-          continue;
-        }
+        if (!roomState) continue;
 
         roomState.turn_paused = true;
         roomState.turn_remaining_ms = remaining;
@@ -1762,30 +1728,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (action === "group_resume") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const groupId = normalizeKey(body.group_id);
       const group = await getGroup(groupId);
 
-      if (!group) {
-        return res.status(404).json({ error: "group not found" });
-      }
-
-      if (group.status === "ended") {
-        return res.status(409).json({ error: "group ended" });
-      }
-
+      if (!group) return res.status(404).json({ error: "group not found" });
+      if (group.status === "ended") return res.status(409).json({ error: "group ended" });
       if (!group.turn_paused || group.turn_remaining_ms == null) {
         return res.status(409).json({ error: "not paused" });
       }
 
       const remaining = Math.max(0, Number(group.turn_remaining_ms) || 0);
-
-      if (remaining <= 0) {
-        return res.status(409).json({ error: "no remaining time" });
-      }
+      if (remaining <= 0) return res.status(409).json({ error: "no remaining time" });
 
       group.turn_paused = false;
       group.turn_ends_at = now() + remaining;
@@ -1797,10 +1752,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       for (const roomName of group.rooms) {
         const roomState = await getRoom(roomName);
-
-        if (!roomState) {
-          continue;
-        }
+        if (!roomState) continue;
 
         roomState.turn_paused = false;
         roomState.turn_ends_at = group.turn_ends_at;
@@ -1818,72 +1770,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const writerId = normalizeKey(body.writer_id);
       const group = await getGroup(groupId);
 
-      if (!group) {
-        return res.status(404).json({ error: "group not found" });
-      }
-
-      if (now() > group.expires_at) {
-        return res.status(410).json({ error: "group expired" });
-      }
-
-      if (group.status === "ended") {
-        return res.status(409).json({ error: "group ended" });
-      }
+      if (!group) return res.status(404).json({ error: "group not found" });
+      if (now() > group.expires_at) return res.status(410).json({ error: "group expired" });
+      if (group.status === "ended") return res.status(409).json({ error: "group ended" });
 
       const writerIndex = group.writers.indexOf(writerId);
+      if (writerIndex < 0) return res.status(403).json({ error: "writer not in group" });
 
-      if (writerIndex < 0) {
-        return res.status(403).json({ error: "writer not in group" });
-      }
-
-      if (group.turn_number <= 0) {
-        return res.status(409).json({ error: "no active turn" });
-      }
-
-      if (group.turn_paused) {
-        return res.status(409).json({ error: "turn paused" });
-      }
-
-      if (group.status !== "active") {
-        return res.status(409).json({ error: "group not active" });
-      }
-
-      if (group.turn_ends_at == null) {
-        return res.status(409).json({ error: "no active turn" });
-      }
-
-      if (group.turn_ends_at <= now()) {
-        return res.status(409).json({ error: "turn expired" });
-      }
-
+      if (group.turn_number <= 0) return res.status(409).json({ error: "no active turn" });
+      if (group.turn_paused) return res.status(409).json({ error: "turn paused" });
+      if (group.status !== "active") return res.status(409).json({ error: "group not active" });
+      if (group.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
+      if (group.turn_ends_at <= now()) return res.status(409).json({ error: "turn expired" });
       if (group.submitted_this_turn.includes(writerId)) {
         return res.status(409).json({ error: "already submitted this turn" });
       }
 
       const text = String(body.text || "").trim();
-
-      if (!text) {
-        return res.status(400).json({ error: "empty text" });
-      }
+      if (!text) return res.status(400).json({ error: "empty text" });
 
       const assignments = computeAssignments(group);
       const targetRoom = assignments[writerId];
-
-      if (!targetRoom) {
-        return res.status(409).json({ error: "no room assigned" });
-      }
+      if (!targetRoom) return res.status(409).json({ error: "no room assigned" });
 
       const roomState = await getRoom(targetRoom);
+      if (!roomState) return res.status(404).json({ error: "assigned room not found" });
 
-      if (!roomState) {
-        return res.status(404).json({ error: "assigned room not found" });
-      }
-
-      /*
-        EXTRAS: se questo writer aveva un obbligo nel turno corrente, appendiamo
-        un marker invisibile (HTML comment) al testo della storia. Verrà filtrato
-        dal client al display ma conservato per la verifica del SU.
-      */
+      // EXTRAS: marker invisibile per tracciare l'obbligo (filtrato dal client).
       let textToAppend = text;
       const obligationEntry = findCurrentObligationFor(group, writerId);
       if (obligationEntry) {
@@ -1891,7 +1804,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         textToAppend = `${text}\n${marker}`;
       }
 
-      roomState.story_so_far = (roomState.story_so_far ? `${roomState.story_so_far}\n` : "") + textToAppend;
+      roomState.story_so_far =
+        (roomState.story_so_far ? `${roomState.story_so_far}\n` : "") + textToAppend;
 
       bump(roomState);
       await saveRoom(targetRoom, roomState);
@@ -1905,29 +1819,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         success: true,
         assigned_room: targetRoom,
         assigned_room_title: roomState.activity_title,
+        assigned_room_incipit: roomState.incipit || "",
         room_state: roomState,
         group_state: group,
       });
     }
 
     if (action === "delete_group") {
-      if (!isAdmin) {
-        return res.status(401).json({ error: "admin only" });
-      }
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const groupId = normalizeKey(body.group_id);
       const group = await getGroup(groupId);
-
-      if (!group) {
-        return res.json({ success: true });
-      }
+      if (!group) return res.json({ success: true });
 
       for (const roomName of group.rooms) {
         const roomState = await getRoom(roomName);
-
-        if (!roomState) {
-          continue;
-        }
+        if (!roomState) continue;
 
         roomState.expires_at = now() - 1;
         roomState.turn_paused = true;
@@ -1958,12 +1865,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     /**
      * group_request_suggestion
-     *  body: { group_id, writer_id }
-     *  - 1 sola richiesta per writer per l'intera durata del gruppo.
-     *  - Estrae random dal pool e lo rimuove.
-     *  - Marca `suggestion_in_flight_until = now + notify_seconds*1000`
-     *    per la notifica passiva agli altri writer (visibile via group_state).
-     *  - Restituisce SOLO al richiedente l'id estratto.
+     * body: { group_id, writer_id }
      */
     if (action === "group_request_suggestion") {
       const groupId = normalizeKey(body.group_id);
@@ -1971,9 +1873,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const group = await getGroup(groupId);
 
       if (!group) return res.status(404).json({ error: "group not found" });
-      if (!group.extras) return res.status(409).json({ error: "extras disabled for this group" });
+      if (!group.extras || !group.extras.config.enabled) {
+        return res.status(409).json({ error: "extras disabled for this group" });
+      }
+      if (!group.extras.config.suggestions_enabled) {
+        return res.status(409).json({ error: "suggestions disabled for this group" });
+      }
       if (group.status === "ended") return res.status(409).json({ error: "group ended" });
-      if (!group.writers.includes(writerId)) return res.status(403).json({ error: "writer not in group" });
+      if (!group.writers.includes(writerId)) {
+        return res.status(403).json({ error: "writer not in group" });
+      }
 
       if (group.extras.used_suggestions_by_writer[writerId]) {
         return res.status(409).json({ error: "suggestion already used by this writer" });
@@ -1984,21 +1893,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const idx = Math.floor(Math.random() * group.extras.suggestions_pool.length);
-      const [suggestion_id] = group.extras.suggestions_pool.splice(idx, 1);
+      const [picked] = group.extras.suggestions_pool.splice(idx, 1);
 
       group.extras.used_suggestions_by_writer[writerId] = {
-        suggestion_id,
+        suggestion_id: picked.id,
+        text: picked.text,
         turn: group.turn_number,
         used_at: now(),
       };
-      group.extras.suggestion_in_flight_until = now() + group.extras.config.notify_seconds * 1000;
+      group.extras.suggestion_in_flight_until =
+        now() + group.extras.config.notify_seconds * 1000;
 
       bump(group);
       await saveGroup(group);
 
       return res.json({
         success: true,
-        suggestion_id,
+        suggestion_id: picked.id,
+        suggestion_text: picked.text,
         turn: group.turn_number,
         notify_seconds: group.extras.config.notify_seconds,
       });
@@ -2006,12 +1918,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     /**
      * group_get_my_extras
-     *  body: { group_id, writer_id }
-     *  Restituisce lo stato extras visibile a quel writer:
-     *   - suggerimento già usato (id e turno) o null
-     *   - obbligo corrente (entry del log per il turno attuale) o null
-     *   - inbox/outbox Q&A che lo coinvolgono
-     *   - flag notifica passiva
+     * body: { group_id, writer_id }
      */
     if (action === "group_get_my_extras") {
       const groupId = normalizeKey(body.group_id);
@@ -2019,18 +1926,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const group = await getGroup(groupId);
 
       if (!group) return res.status(404).json({ error: "group not found" });
-      if (!group.writers.includes(writerId)) return res.status(403).json({ error: "writer not in group" });
+      if (!group.writers.includes(writerId)) {
+        return res.status(403).json({ error: "writer not in group" });
+      }
 
-      if (!group.extras) {
+      if (!group.extras || !group.extras.config.enabled) {
         return res.json({
           success: true,
           enabled: false,
+          suggestions_enabled: false,
+          obligations_enabled: false,
+          qa_enabled: false,
           suggestion_used: null,
           current_obligation: null,
           qa_inbox: [],
           qa_outbox: [],
           suggestion_in_flight_until: null,
           notify_seconds: 0,
+          suggestions_remaining: 0,
+          obligations_remaining: 0,
         });
       }
 
@@ -2042,23 +1956,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.json({
         success: true,
         enabled: true,
+        suggestions_enabled: group.extras.config.suggestions_enabled,
+        obligations_enabled: group.extras.config.obligations_enabled,
+        qa_enabled: group.extras.config.qa_enabled,
         suggestion_used,
         current_obligation,
         qa_inbox,
         qa_outbox,
         suggestion_in_flight_until: group.extras.suggestion_in_flight_until,
         notify_seconds: group.extras.config.notify_seconds,
+        suggestions_remaining: group.extras.suggestions_pool.length,
+        obligations_remaining: group.extras.obligations_pool.length,
       });
     }
 
     /**
      * group_send_qa
-     *  body: { group_id, from_writer, to_writer, body, reply_to?, origin_suggestion_id? }
-     *  Mini Q&A privata 1-a-1 fra writer (suggerimenti A3.6/A3.7).
-     *  Vincoli:
-     *   - from_writer e to_writer entrambi nel gruppo
-     *   - from_writer != to_writer
-     *   - body non vuoto (max 500 char)
+     * body: { group_id, from_writer, to_writer, body, reply_to?, origin_suggestion_id? }
      */
     if (action === "group_send_qa") {
       const groupId = normalizeKey(body.group_id);
@@ -2067,13 +1981,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const text = String(body.body || "").trim().slice(0, 500);
 
       if (!text) return res.status(400).json({ error: "empty body" });
-      if (fromWriter === toWriter) return res.status(400).json({ error: "cannot send to yourself" });
+      if (fromWriter === toWriter) {
+        return res.status(400).json({ error: "cannot send to yourself" });
+      }
 
       const group = await getGroup(groupId);
       if (!group) return res.status(404).json({ error: "group not found" });
-      if (!group.extras) return res.status(409).json({ error: "extras disabled for this group" });
-      if (!group.writers.includes(fromWriter)) return res.status(403).json({ error: "from_writer not in group" });
-      if (!group.writers.includes(toWriter)) return res.status(403).json({ error: "to_writer not in group" });
+      if (!group.extras || !group.extras.config.enabled) {
+        return res.status(409).json({ error: "extras disabled for this group" });
+      }
+      if (!group.extras.config.qa_enabled) {
+        return res.status(409).json({ error: "qa disabled for this group" });
+      }
+      if (!group.writers.includes(fromWriter)) {
+        return res.status(403).json({ error: "from_writer not in group" });
+      }
+      if (!group.writers.includes(toWriter)) {
+        return res.status(403).json({ error: "to_writer not in group" });
+      }
 
       const msg: QaMessage = {
         id: shortId("qa"),
@@ -2081,7 +2006,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         to_writer: toWriter,
         body: text,
         reply_to: body.reply_to ? String(body.reply_to) : null,
-        origin_suggestion_id: body.origin_suggestion_id ? String(body.origin_suggestion_id) : null,
+        origin_suggestion_id: body.origin_suggestion_id
+          ? String(body.origin_suggestion_id)
+          : null,
         created_at: now(),
       };
       group.extras.qa_threads.push(msg);
@@ -2093,10 +2020,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     /**
-     * group_su_extras_view
-     *  body: { group_id }   (admin)
-     *  Restituisce l'intero blocco extras + lookup obblighi per turno/writer.
-     *  Pensato per la verifica manuale finale del SU.
+     * group_su_extras_view (admin)
+     * body: { group_id }
+     * Restituisce l'intero blocco extras + lookup obblighi per turno/writer.
      */
     if (action === "group_su_extras_view") {
       if (!isAdmin) return res.status(401).json({ error: "admin only" });

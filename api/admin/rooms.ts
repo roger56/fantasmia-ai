@@ -4,6 +4,134 @@
 FantasMIA / Fantasmia - API ROOMS / GROUPS
 ==================================================
 
+
+  SCOPO DEL MODULO
+
+  Questa API Next/Vercel gestisce:
+
+  1. Stanze singole legacy
+  2. Gruppi legacy basati su batch di rooms[]
+  3. Gruppi V2 con parallelismo reale tra writers
+  4. Rotazione round-robin server-side tra writers e stanze
+  5. Submit controllato per evitare doppio invio nello stesso turno
+  6. Stato gruppo: waiting | active | paused | ended
+  7. CORS per domini ufficiali, fantas-ia.it, Lovable e localhost
+  8. FUNZIONI ACCESSORIE COLLABORATIVE (extras):
+     - Suggerimenti su richiesta del writer (1 per writer, casuali, non
+       ripetibili nel gruppo).
+     - Obblighi narrativi assegnati automaticamente dal sistema (max 1 per
+       turno, salta il primo turno, max 1 per writer, non ripetibili).
+     - Mini Q&A privata writer ↔ writer.
+     - Log persistente per la verifica manuale finale del SU.
+
+  --------------------------------------------------
+  CHANGELOG (rispetto alla versione precedente)
+  --------------------------------------------------
+
+  - FIX `extras disabled for this group`: `create_group` ora accetta sia il
+    formato CLIENT corrente (`{enabled, suggestions_enabled, suggestions_pool,
+    obligations_enabled, obligations_pool, qa_enabled, notify_seconds?}`) sia
+    il formato legacy (`{suggestions, obligations, notify_seconds}`).
+    Gli extras vengono materializzati in `group.extras` se almeno una delle
+    feature è attiva. Il vecchio bug per cui il client inviava i pool ma
+    `group.extras` restava `null` è risolto.
+
+  - FIX titolo gruppo "grp-xxx": `create_group` ora accetta sia
+    `activity_title` (vecchio) sia `title` (nuovo client).
+
+  - FIX titoli stanze + incipit persi: `create_group` ora accetta
+    `rooms_meta: [{title, incipit}]` oltre a `room_titles: string[]`.
+    L'incipit viene salvato sul `RoomState.incipit` (nuovo campo opzionale)
+    e ritornato dal server.
+
+  - `get_my_assignment` ora ritorna anche `assigned_room_incipit` per
+    permettere al client di mostrare l'incipit nel box "storia in corso".
+
+  - `group_state` espone `extras_public.enabled` per il client.
+
+  - `group_get_my_extras` espone `obligations_remaining` e
+    `suggestions_remaining`.
+
+  - Q&A: filtro `qa_enabled` rispettato lato server (se disabilitato:
+    409 "qa disabled").
+
+  --------------------------------------------------
+  MODELLO GRUPPI V2
+  --------------------------------------------------
+
+  Regola centrale:
+
+    1 gruppo = N writers = N stanze = N link
+
+  In ogni turno:
+    - tutti i writers sono attivi contemporaneamente
+    - ogni writer scrive su una stanza diversa
+    - ogni stanza ha un solo writer assegnato
+    - nessun writer deve restare in attesa se il turno è active
+
+  Rotazione round-robin:
+    room_index(writerIndex, turnNumber) =
+      (writerIndex + turnNumber - 1) mod N
+
+  --------------------------------------------------
+  EXTRAS (SUGGERIMENTI & OBBLIGHI)
+  --------------------------------------------------
+
+  Stato `extras` (campo opzionale del GroupState):
+    - config: { enabled, suggestions_enabled, obligations_enabled,
+                qa_enabled, notify_seconds }
+    - suggestions_pool: testi (string) ancora estraibili (server pop random)
+    - obligations_pool: testi (string) ancora estraibili
+    - used_suggestions_by_writer: writer -> {id, text, turn, used_at}
+    - obligations_log: lista {turn, writer_id, obligation_id, text,
+                              assigned_at}
+    - qa_threads: messaggi 1-a-1 tra writer
+    - suggestion_in_flight_until: timestamp per notifica passiva agli altri
+
+  Gli ID di suggerimenti e obblighi sono autogenerati lato server (s1, s2,
+  ..., o1, o2, ...) per disaccoppiarli dai testi forniti dal SU.
+
+  Regole obblighi:
+    - Mai assegnati al turno 1.
+    - Da turno 2: 1 writer per turno, scelto random tra chi non ha ancora
+      ricevuto un obbligo.
+    - Quantità totale (NO):
+        NT > NW    -> NO = NW
+        NT = NW    -> NO = NW - 1
+      (almeno un turno resta libero)
+
+  Regole suggerimenti:
+    - Pool iniziale = NW elementi pescati random dalla lista config
+      (oppure tutta la lista se inferiore).
+    - Estrazione random a richiesta writer; rimosso dal pool.
+    - 1 sola richiesta per writer per l'intera durata del gruppo.
+
+  --------------------------------------------------
+  REDIS / UPSTASH
+  --------------------------------------------------
+
+  - Redis viene letto tramite Redis.fromEnv().
+  - Variabili Vercel richieste:
+      UPSTASH_REDIS_REST_URL
+      UPSTASH_REDIS_REST_TOKEN
+  - Questo file evita polling lato server: risponde solo alle chiamate
+    ricevute. La riduzione vera dei consumi Redis va completata anche lato
+    client (polling >= 5-10s, stop quando tab nascosta, no chiamate per
+    render React).
+  - Alcune azioni come list_rooms/list_groups fanno più letture Redis;
+    usarle con moderazione lato UI.
+
+  --------------------------------------------------
+  SICUREZZA
+  --------------------------------------------------
+
+  - Le azioni amministrative richiedono Bearer token ADMIN.
+  - Le action extras writer-side (group_request_suggestion,
+    group_get_my_extras, group_send_qa) sono pubbliche ma vincolate al
+    fatto che il writer_id sia presente nel gruppo. Nessun PII oltre il
+    writer_id.
+  - Nessun log di token o credenziali.
+
 CHANGELOG (questa versione)
 - A1: Suggerimento mostrato al writer corretto.
       * Nuovo campo per-writer `suggestion_in_flight_by_writer` in extras.

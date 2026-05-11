@@ -670,7 +670,7 @@ function computeAssignments(group: GroupState): Record<string, string | null> {
   const N = group.rooms.length;
   for (let wi = 0; wi < group.writers.length; wi++) {
     const writer = group.writers[wi];
-    const roomIndex = (wi + group.turn_number - 1) % N;
+    const roomIndex = ((wi - (group.turn_number - 1)) % N + N) % N;
     assignments[writer] = group.rooms[roomIndex] || null;
   }
   return assignments;
@@ -685,7 +685,7 @@ function computeAssignmentDetails(group: GroupState): AssignmentDetail[] {
       details.push({ writer_id: writer, writer_index: wi, room: null, room_index: null });
       continue;
     }
-    const roomIndex = (wi + group.turn_number - 1) % N;
+    const roomIndex = ((wi - (group.turn_number - 1)) % N + N) % N;
     details.push({
       writer_id: writer,
       writer_index: wi,

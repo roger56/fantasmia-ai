@@ -1,156 +1,27 @@
 // api/admin/rooms.ts
 /*
 ==================================================
-FantasMIA / Fantasmia - API ROOMS / GROUPS
+FantasMIA / Fantasmia - API ROOMS / GROUPS  (v5)
 ==================================================
 
+CHANGELOG v5 (rispetto a v4)
+- Rotazione BACKWARD: roomIndex = ((wi - (turn - 1)) mod N + N) mod N.
+- RoomState.story_so_far_at_turn_start: snapshot CONGELATO della storia
+  all'inizio di ogni turno. Aggiornato SOLO da group_advance_turn.
+- GroupState.default_turn_s: durata turno scelta dal SU alla creazione,
+  fonte di verità per group_advance_turn / group_force_next_turn.
+- group_force_next_turn: NON usa più il residuo del turno; riusa SEMPRE
+  default_turn_s (o body.turn_s se passato esplicitamente).
+- get_my_assignment: aggiunge `story_so_far_frozen` (per box "storia fino
+  ad ora") e `story_so_far_live` (debug).
+- group_state: espone default_turn_s.
+- Pulizia bug minori (`instanceof Error & Error`, `&_paused`, `& 0`,
+  `&_writer`, `myFlight & myFlight`).
 
-  SCOPO DEL MODULO
-
-  Questa API Next/Vercel gestisce:
-
-  1. Stanze singole legacy
-  2. Gruppi legacy basati su batch di rooms[]
-  3. Gruppi V2 con parallelismo reale tra writers
-  4. Rotazione round-robin server-side tra writers e stanze
-  5. Submit controllato per evitare doppio invio nello stesso turno
-  6. Stato gruppo: waiting | active | paused | ended
-  7. CORS per domini ufficiali, fantas-ia.it, Lovable e localhost
-  8. FUNZIONI ACCESSORIE COLLABORATIVE (extras):
-     - Suggerimenti su richiesta del writer (1 per writer, casuali, non
-       ripetibili nel gruppo).
-     - Obblighi narrativi assegnati automaticamente dal sistema (max 1 per
-       turno, salta il primo turno, max 1 per writer, non ripetibili).
-     - Mini Q&A privata writer ↔ writer.
-     - Log persistente per la verifica manuale finale del SU.
-
-  --------------------------------------------------
-  CHANGELOG (rispetto alla versione precedente)
-  --------------------------------------------------
-
-  - FIX `extras disabled for this group`: `create_group` ora accetta sia il
-    formato CLIENT corrente (`{enabled, suggestions_enabled, suggestions_pool,
-    obligations_enabled, obligations_pool, qa_enabled, notify_seconds?}`) sia
-    il formato legacy (`{suggestions, obligations, notify_seconds}`).
-    Gli extras vengono materializzati in `group.extras` se almeno una delle
-    feature è attiva. Il vecchio bug per cui il client inviava i pool ma
-    `group.extras` restava `null` è risolto.
-
-  - FIX titolo gruppo "grp-xxx": `create_group` ora accetta sia
-    `activity_title` (vecchio) sia `title` (nuovo client).
-
-  - FIX titoli stanze + incipit persi: `create_group` ora accetta
-    `rooms_meta: [{title, incipit}]` oltre a `room_titles: string[]`.
-    L'incipit viene salvato sul `RoomState.incipit` (nuovo campo opzionale)
-    e ritornato dal server.
-
-  - `get_my_assignment` ora ritorna anche `assigned_room_incipit` per
-    permettere al client di mostrare l'incipit nel box "storia in corso".
-
-  - `group_state` espone `extras_public.enabled` per il client.
-
-  - `group_get_my_extras` espone `obligations_remaining` e
-    `suggestions_remaining`.
-
-  - Q&A: filtro `qa_enabled` rispettato lato server (se disabilitato:
-    409 "qa disabled").
-
-  --------------------------------------------------
-  MODELLO GRUPPI V2
-  --------------------------------------------------
-
-  Regola centrale:
-
-    1 gruppo = N writers = N stanze = N link
-
-  In ogni turno:
-    - tutti i writers sono attivi contemporaneamente
-    - ogni writer scrive su una stanza diversa
-    - ogni stanza ha un solo writer assegnato
-    - nessun writer deve restare in attesa se il turno è active
-
-  Rotazione round-robin:
-    room_index(writerIndex, turnNumber) =
-      (writerIndex + turnNumber - 1) mod N
-
-  --------------------------------------------------
-  EXTRAS (SUGGERIMENTI & OBBLIGHI)
-  --------------------------------------------------
-
-  Stato `extras` (campo opzionale del GroupState):
-    - config: { enabled, suggestions_enabled, obligations_enabled,
-                qa_enabled, notify_seconds }
-    - suggestions_pool: testi (string) ancora estraibili (server pop random)
-    - obligations_pool: testi (string) ancora estraibili
-    - used_suggestions_by_writer: writer -> {id, text, turn, used_at}
-    - obligations_log: lista {turn, writer_id, obligation_id, text,
-                              assigned_at}
-    - qa_threads: messaggi 1-a-1 tra writer
-    - suggestion_in_flight_until: timestamp per notifica passiva agli altri
-
-  Gli ID di suggerimenti e obblighi sono autogenerati lato server (s1, s2,
-  ..., o1, o2, ...) per disaccoppiarli dai testi forniti dal SU.
-
-  Regole obblighi:
-    - Mai assegnati al turno 1.
-    - Da turno 2: 1 writer per turno, scelto random tra chi non ha ancora
-      ricevuto un obbligo.
-    - Quantità totale (NO):
-        NT > NW    -> NO = NW
-        NT = NW    -> NO = NW - 1
-      (almeno un turno resta libero)
-
-  Regole suggerimenti:
-    - Pool iniziale = NW elementi pescati random dalla lista config
-      (oppure tutta la lista se inferiore).
-    - Estrazione random a richiesta writer; rimosso dal pool.
-    - 1 sola richiesta per writer per l'intera durata del gruppo.
-
-  --------------------------------------------------
-  REDIS / UPSTASH
-  --------------------------------------------------
-
-  - Redis viene letto tramite Redis.fromEnv().
-  - Variabili Vercel richieste:
-      UPSTASH_REDIS_REST_URL
-      UPSTASH_REDIS_REST_TOKEN
-  - Questo file evita polling lato server: risponde solo alle chiamate
-    ricevute. La riduzione vera dei consumi Redis va completata anche lato
-    client (polling >= 5-10s, stop quando tab nascosta, no chiamate per
-    render React).
-  - Alcune azioni come list_rooms/list_groups fanno più letture Redis;
-    usarle con moderazione lato UI.
-
-  --------------------------------------------------
-  SICUREZZA
-  --------------------------------------------------
-
-  - Le azioni amministrative richiedono Bearer token ADMIN.
-  - Le action extras writer-side (group_request_suggestion,
-    group_get_my_extras, group_send_qa) sono pubbliche ma vincolate al
-    fatto che il writer_id sia presente nel gruppo. Nessun PII oltre il
-    writer_id.
-  - Nessun log di token o credenziali.
-
-CHANGELOG (questa versione)
-- A1: Suggerimento mostrato al writer corretto.
-      * Nuovo campo per-writer `suggestion_in_flight_by_writer` in extras.
-      * `group_request_suggestion` lo valorizza solo per il writer richiedente
-        e include `requested_by` nella risposta.
-      * `group_get_my_extras` ritorna `suggestion_in_flight_until` SOLO se
-        riferito al writer chiamante (turno corrente). Aggiunge
-        `notify_others_until` (max scadenza degli altri writer) per la
-        notifica passiva.
-      * `extras_public` in `group_state` non espone più il flight cross-writer.
-      * `suggestion_used` viene marcato `is_current_turn`.
-- A2: `group_send_qa` accetta `text` | `message` | `body` (alias) e ritorna
-      400 con error `"qa text empty"` se vuoto. Validazione su
-      from_writer/to_writer non vuoti.
-- A3: log diagnostici minimali (no PII, no token):
-      [extras] suggestion writer=… turn=… id=…
-      [extras] obligation turn=… writer=… id=…
-      [qa] from=… to=… len=… group=…
-      [group] advance_turn group=… turn=… → next=…
+ATTENZIONE: gruppi/stanze creati con versioni precedenti restano
+compatibili in lettura (default_turn_s -> 180, snapshot -> ""), ma per
+avere il comportamento corretto è raccomandato cancellare i gruppi
+esistenti e ricrearli.
 */
 
 import type { NextApiRequest, NextApiResponse } from "next";
@@ -159,11 +30,7 @@ import { Redis } from "@upstash/redis";
 
 export const config = { runtime: "nodejs" };
 
-/*
-==================================================
-CORS
-==================================================
-*/
+/* ================================================== CORS ================================================== */
 const allowedOrigins: Array<string | RegExp> = [
   "https://fantasmia.it",
   "https://www.fantasmia.it",
@@ -201,11 +68,7 @@ function applyCors(req: NextApiRequest, res: NextApiResponse) {
   return { ok: true, origin };
 }
 
-/*
-==================================================
-TYPES
-==================================================
-*/
+/* ================================================== TYPES ================================================== */
 type RoomMode = "CONTINUA_TU" | "CAMPBELL" | "PROPP";
 
 type RoomState = {
@@ -215,6 +78,8 @@ type RoomState = {
   prompt_seed: string;
   incipit?: string;
   story_so_far: string;
+  /** Snapshot CONGELATO all'inizio del turno corrente. Aggiornato solo da group_advance_turn. */
+  story_so_far_at_turn_start?: string;
   writers: string[];
   current_writer_index: number;
   turn_ends_at: number | null;
@@ -246,7 +111,6 @@ type RoomSummary = {
 
 type GroupStatus = "waiting" | "active" | "paused" | "ended";
 
-/* ---- EXTRAS TYPES ---- */
 type ExtrasConfig = {
   enabled: boolean;
   suggestions_enabled: boolean;
@@ -291,9 +155,8 @@ type ExtrasState = {
   used_suggestions_by_writer: Record<string, SuggestionUse>;
   obligations_log: ObligationLogEntry[];
   qa_threads: QaMessage[];
-  /** @deprecated mantenuto per retrocompat. Usare suggestion_in_flight_by_writer. */
+  /** @deprecated retrocompat */
   suggestion_in_flight_until: number | null;
-  /** A1: per-writer flight notice. */
   suggestion_in_flight_by_writer: Record<string, SuggestionFlight>;
 };
 
@@ -307,6 +170,8 @@ type GroupState = {
   writers: string[];
   turn_number: number;
   total_turns: number;
+  /** Durata turno scelta dal SU alla creazione (secondi). Fonte di verità per advance/force. */
+  default_turn_s: number;
   turn_ends_at: number | null;
   turn_paused: boolean;
   turn_remaining_ms: number | null;
@@ -336,22 +201,14 @@ type AssignmentDetail = {
 
 type ApiErrorBody = { error: string; details?: string };
 
-/*
-==================================================
-REDIS / KEYS
-==================================================
-*/
+/* ================================================== REDIS / KEYS ================================================== */
 const redis = Redis.fromEnv();
 const KEY_ROOM = (room: string) => `rooms:room:${room}`;
 const KEY_ROOMS_SET = "rooms:all";
 const KEY_GROUP = (groupId: string) => `groups:group:${groupId}`;
 const KEY_GROUPS_SET = "groups:all";
 
-/*
-==================================================
-UTILS
-==================================================
-*/
+/* ================================================== UTILS ================================================== */
 const now = () => Date.now();
 
 function normalizeKey(value: any): string {
@@ -428,11 +285,7 @@ function shortId(prefix = "x"): string {
   return `${prefix}-${crypto.randomBytes(4).toString("hex")}`;
 }
 
-/*
-==================================================
-ADMIN VERIFY
-==================================================
-*/
+/* ================================================== ADMIN VERIFY ================================================== */
 function verifyAdmin(req: NextApiRequest): boolean {
   const auth = String(req.headers.authorization || "").trim();
   if (!auth.startsWith("Bearer ")) return false;
@@ -462,11 +315,7 @@ function verifyAdmin(req: NextApiRequest): boolean {
   }
 }
 
-/*
-==================================================
-REDIS HELPERS - ROOMS
-==================================================
-*/
+/* ================================================== REDIS HELPERS - ROOMS ================================================== */
 function normalizeRoomState(room: string, state: RoomState): RoomState {
   return {
     room_name: state.room_name || room,
@@ -475,6 +324,10 @@ function normalizeRoomState(room: string, state: RoomState): RoomState {
     prompt_seed: String(state.prompt_seed || ""),
     incipit: typeof state.incipit === "string" ? state.incipit : "",
     story_so_far: String(state.story_so_far || ""),
+    story_so_far_at_turn_start:
+      typeof state.story_so_far_at_turn_start === "string"
+        ? state.story_so_far_at_turn_start
+        : "",
     writers: Array.isArray(state.writers) ? state.writers : [],
     current_writer_index: Number.isFinite(Number(state.current_writer_index))
       ? Number(state.current_writer_index)
@@ -496,7 +349,6 @@ function normalizeRoomState(room: string, state: RoomState): RoomState {
 async function getRoom(room: string, cleanupExpired = false): Promise<RoomState | null> {
   const state = await redis.get<RoomState>(KEY_ROOM(room));
   if (!state) return null;
-
   const normalized = normalizeRoomState(room, state);
   if (now() > normalized.expires_at) {
     if (cleanupExpired) {
@@ -533,11 +385,7 @@ function toSummary(room: string, state: RoomState): RoomSummary {
   };
 }
 
-/*
-==================================================
-REDIS HELPERS - GROUPS
-==================================================
-*/
+/* ================================================== REDIS HELPERS - GROUPS ================================================== */
 function normalizePoolItem(value: any, fallbackPrefix: string, idx: number): PoolItem | null {
   if (typeof value === "string") {
     const text = value.trim();
@@ -566,10 +414,7 @@ function normalizeFlightMap(value: any): Record<string, SuggestionFlight> {
   for (const k of Object.keys(value)) {
     const v = (value as any)[k];
     if (v && typeof v === "object" && Number.isFinite(Number(v.until))) {
-      out[k] = {
-        until: Number(v.until),
-        turn: Number(v.turn || 0),
-      };
+      out[k] = { until: Number(v.until), turn: Number(v.turn || 0) };
     }
   }
   return out;
@@ -620,12 +465,11 @@ function normalizeGroupState(groupId: string, state: GroupState): GroupState {
     writers: Array.isArray(state.writers) ? state.writers : [],
     turn_number: turnNumber,
     total_turns: typeof state.total_turns === "number" ? state.total_turns : 0,
+    default_turn_s: clampNumber((state as any).default_turn_s, 180, 15, 600),
     turn_ends_at: state.turn_ends_at ?? null,
     turn_paused: turnPaused,
     turn_remaining_ms: state.turn_remaining_ms ?? null,
-    submitted_this_turn: Array.isArray(state.submitted_this_turn)
-      ? state.submitted_this_turn
-      : [],
+    submitted_this_turn: Array.isArray(state.submitted_this_turn) ? state.submitted_this_turn : [],
     status,
     extras: normalizeExtrasState((state as any).extras),
     version: Number(state.version || 1),
@@ -656,41 +500,45 @@ async function saveGroup(group: GroupState) {
   await redis.sadd(KEY_GROUPS_SET, group.group_id);
 }
 
-/*
-==================================================
-GROUP ASSIGNMENTS (round-robin)
-==================================================
-*/
-function computeAssignments(group: GroupState): Record<string, string | null> {
-  const assignments: Record<string, string | null> = {};
-  for (const writer of group.writers) assignments[writer] = null;
+/* ================================================== ROTATION (BACKWARD) ================================================== */
+/**
+ * Rotazione BACKWARD writer→stanza.
+ *   roomIndex = ((writerIndex - (turnNumber - 1)) mod N + N) mod N
+ * Al turno 1 ogni writer parte dalla stanza con il proprio indice.
+ */
+function getAssignedRoomIndex(writerIndex: number, turnNumber: number, N: number): number {
+  if (N <= 0) return 0;
+  const tn = Math.max(1, turnNumber || 1);
+  return ((writerIndex - (tn - 1)) % N + N) % N;
+}
 
-  if (group.turn_number <= 0 || group.rooms.length === 0) return assignments;
-
+function computeAssignments(group: GroupState): Record<string, string> {
+  const out: Record<string, string> = {};
   const N = group.rooms.length;
+  if (N === 0) return out;
   for (let wi = 0; wi < group.writers.length; wi++) {
     const writer = group.writers[wi];
-    const roomIndex = ((wi - (group.turn_number - 1)) % N + N) % N;
-    assignments[writer] = group.rooms[roomIndex] || null;
+    const idx = getAssignedRoomIndex(wi, group.turn_number, N);
+    out[writer] = group.rooms[idx];
   }
-  return assignments;
+  return out;
 }
 
 function computeAssignmentDetails(group: GroupState): AssignmentDetail[] {
-  const details: AssignmentDetail[] = [];
   const N = group.rooms.length;
+  const details: AssignmentDetail[] = [];
   for (let wi = 0; wi < group.writers.length; wi++) {
     const writer = group.writers[wi];
-    if (group.turn_number <= 0 || N === 0) {
+    if (N === 0) {
       details.push({ writer_id: writer, writer_index: wi, room: null, room_index: null });
       continue;
     }
-    const roomIndex = ((wi - (group.turn_number - 1)) % N + N) % N;
+    const idx = getAssignedRoomIndex(wi, group.turn_number, N);
     details.push({
       writer_id: writer,
       writer_index: wi,
-      room: group.rooms[roomIndex] || null,
-      room_index: roomIndex,
+      room: group.rooms[idx] || null,
+      room_index: idx,
     });
   }
   return details;
@@ -698,22 +546,16 @@ function computeAssignmentDetails(group: GroupState): AssignmentDetail[] {
 
 function findAssignedWriterForRoom(group: GroupState, roomName: string): string | null {
   const N = group.rooms.length;
-  if (group.turn_number <= 0 || N === 0) return null;
-  const roomIndex = group.rooms.indexOf(roomName);
-  if (roomIndex < 0) return null;
-  for (let wi = 0; wi < group.writers.length; wi++) {
-    if ((wi + group.turn_number - 1) % N === roomIndex) {
-      return group.writers[wi];
-    }
-  }
-  return null;
+  if (N === 0) return null;
+  const roomIdx = group.rooms.indexOf(roomName);
+  if (roomIdx < 0) return null;
+  // Inversa della formula backward: wi = (roomIdx + (tn - 1)) mod N
+  const tn = Math.max(1, group.turn_number || 1);
+  const wi = (roomIdx + (tn - 1)) % N;
+  return group.writers[wi] || null;
 }
 
-/*
-==================================================
-EXTRAS HELPERS
-==================================================
-*/
+/* ================================================== EXTRAS HELPERS ================================================== */
 function parseExtrasConfigFromBody(
   ec: any,
   expectedWriters: number,
@@ -721,58 +563,40 @@ function parseExtrasConfigFromBody(
 ): ExtrasState | null {
   if (!ec || typeof ec !== "object") return null;
 
-  // Formato CLIENT corrente:
-  // { enabled, suggestions_enabled, suggestions_pool, obligations_enabled,
-  //   obligations_pool, qa_enabled, notify_seconds? }
-  // Formato LEGACY:
-  // { suggestions: string[], obligations: string[], notify_seconds? }
-  const masterEnabled = ec.enabled !== false;
-
-  const suggestionsRaw = Array.isArray(ec.suggestions_pool)
-    ? ec.suggestions_pool
-    : Array.isArray(ec.suggestions)
-    ? ec.suggestions
-    : [];
-  const obligationsRaw = Array.isArray(ec.obligations_pool)
-    ? ec.obligations_pool
-    : Array.isArray(ec.obligations)
-    ? ec.obligations
-    : [];
-
-  const suggestionsEnabledRequested =
-    ec.suggestions_enabled !== undefined ? !!ec.suggestions_enabled : suggestionsRaw.length > 0;
-  const obligationsEnabledRequested =
-    ec.obligations_enabled !== undefined ? !!ec.obligations_enabled : obligationsRaw.length > 0;
-  const qaEnabledRequested = !!ec.qa_enabled;
-
-  const suggestionsEnabled = suggestionsEnabledRequested && suggestionsRaw.length > 0;
-  const obligationsEnabled = obligationsEnabledRequested && obligationsRaw.length > 0;
-
-  if (!masterEnabled) return null;
-  if (!suggestionsEnabled && !obligationsEnabled && !qaEnabledRequested) return null;
-
-  // Suggerimenti: pool iniziale = NW pescati random (o tutta la lista se < NW)
-  const fullSuggestions = normalizePoolArray(suggestionsRaw, "s");
-  const suggestionsPool = suggestionsEnabled
-    ? shuffled(fullSuggestions).slice(0, Math.min(expectedWriters, fullSuggestions.length))
-    : [];
-
-  // Obblighi: NO = NW se NT > NW, altrimenti NW - 1
-  const fullObligations = normalizePoolArray(obligationsRaw, "o");
-  let NO = 0;
-  if (obligationsEnabled) {
-    NO = totalTurns > expectedWriters ? expectedWriters : Math.max(0, expectedWriters - 1);
-    NO = Math.min(NO, fullObligations.length);
-  }
-  const obligationsPool = obligationsEnabled ? shuffled(fullObligations).slice(0, NO) : [];
+  // Formato CLIENT corrente
+  const enabled =
+    !!ec.enabled ||
+    !!ec.suggestions_enabled ||
+    !!ec.obligations_enabled ||
+    !!ec.qa_enabled;
+  if (!enabled) return null;
 
   const config: ExtrasConfig = {
     enabled: true,
-    suggestions_enabled: suggestionsEnabled,
-    obligations_enabled: obligationsEnabled,
-    qa_enabled: qaEnabledRequested,
+    suggestions_enabled: !!ec.suggestions_enabled,
+    obligations_enabled: !!ec.obligations_enabled,
+    qa_enabled: !!ec.qa_enabled,
     notify_seconds: clampNumber(ec.notify_seconds, 10, 3, 60),
   };
+
+  // Suggestions pool: NW pescati random
+  let suggestionsPool: PoolItem[] = [];
+  if (config.suggestions_enabled && Array.isArray(ec.suggestions_pool)) {
+    const all = (ec.suggestions_pool as any[])
+      .map((t, i) => normalizePoolItem(t, "s", i))
+      .filter((x): x is PoolItem => !!x);
+    suggestionsPool = shuffled(all).slice(0, expectedWriters);
+  }
+
+  // Obligations pool: NO = NW se NT > NW, altrimenti NW - 1
+  let obligationsPool: PoolItem[] = [];
+  if (config.obligations_enabled && Array.isArray(ec.obligations_pool)) {
+    const all = (ec.obligations_pool as any[])
+      .map((t, i) => normalizePoolItem(t, "o", i))
+      .filter((x): x is PoolItem => !!x);
+    const target = totalTurns > expectedWriters ? expectedWriters : Math.max(0, expectedWriters - 1);
+    obligationsPool = shuffled(all).slice(0, target);
+  }
 
   return {
     config,
@@ -786,28 +610,30 @@ function parseExtrasConfigFromBody(
   };
 }
 
-/**
- * Assegna un obbligo per il turno corrente:
- *  - mai al turno 1
- *  - max 1 per turno
- *  - max 1 per writer
- *  - estrae dal pool e lo rimuove
- * Mutates `group.extras`.
- */
-function maybeAssignObligationForTurn(group: GroupState): ObligationLogEntry | null {
+function findCurrentObligationFor(
+  group: GroupState,
+  writerId: string
+): { id: string; text: string; turn: number } | null {
   if (!group.extras) return null;
-  if (!group.extras.config.enabled || !group.extras.config.obligations_enabled) return null;
+  const entry = group.extras.obligations_log.find(
+    (e) => e.writer_id === writerId && e.turn === group.turn_number
+  );
+  if (!entry) return null;
+  return { id: entry.obligation_id, text: entry.text, turn: entry.turn };
+}
+
+function maybeAssignObligationForTurn(group: GroupState): ObligationLogEntry | null {
+  if (!group.extras || !group.extras.config.enabled || !group.extras.config.obligations_enabled) {
+    return null;
+  }
   if (group.turn_number <= 1) return null;
   if (!group.extras.obligations_pool.length) return null;
 
-  // 1 per turno
-  if (group.extras.obligations_log.some((e) => e.turn === group.turn_number)) return null;
-
   const alreadyAssigned = new Set(group.extras.obligations_log.map((e) => e.writer_id));
-  const eligible = group.writers.filter((w) => !alreadyAssigned.has(w));
-  if (!eligible.length) return null;
+  const candidates = group.writers.filter((w) => !alreadyAssigned.has(w));
+  if (!candidates.length) return null;
 
-  const writer = pickRandom(eligible);
+  const writer = pickRandom(candidates);
   if (!writer) return null;
 
   const idx = Math.floor(Math.random() * group.extras.obligations_pool.length);
@@ -821,116 +647,36 @@ function maybeAssignObligationForTurn(group: GroupState): ObligationLogEntry | n
     assigned_at: now(),
   };
   group.extras.obligations_log.push(entry);
-
-  console.log(
-    "[extras] obligation turn=%d writer=%s id=%s",
-    entry.turn,
-    entry.writer_id,
-    entry.obligation_id
-  );
-
+  console.log("[extras] obligation turn=%d writer=%s id=%s", entry.turn, writer, picked.id);
   return entry;
 }
 
-function findCurrentObligationFor(group: GroupState, writerId: string): ObligationLogEntry | null {
-  if (!group.extras) return null;
-  return (
-    group.extras.obligations_log.find(
-      (e) => e.turn === group.turn_number && e.writer_id === writerId
-    ) || null
-  );
-}
-
-/*
-==================================================
-HANDLER
-==================================================
-*/
+/* ================================================== HANDLER ================================================== */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const cors = applyCors(req, res);
   if (req.method === "OPTIONS") {
     return res.status(cors.ok ? 204 : 403).end();
   }
-  if (!cors.ok) {
-    return res.status(403).json({ error: "origin not allowed" });
-  }
-
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  if (!cors.ok) return res.status(403).json({ error: "origin not allowed" });
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   let body: any = req.body;
   if (typeof body === "string") {
-    try {
-      body = JSON.parse(body);
-    } catch {
-      body = {};
-    }
+    try { body = JSON.parse(body); } catch { body = {}; }
   }
-  if (!body || typeof body !== "object") body = {};
-
+  body = body || {};
   const action = String(body.action || "").trim();
   const isAdmin = verifyAdmin(req);
 
   try {
-    /*
-    ==================================================
-    ROOM LEGACY
-    ==================================================
-    */
-    if (action === "create_room") {
-      if (!isAdmin) return res.status(401).json({ error: "admin only" });
-      const room = normalizeKey(body.room);
-      if (!room) return res.status(400).json({ error: "missing room" });
-
-      const existing = await getRoom(room);
-      if (existing) return res.status(409).json({ error: "room already exists" });
-
-      const ttlHours = clampNumber(body.ttl_h, 12, 1, 24);
-      const state: RoomState = {
-        room_name: room,
-        activity_title: String(body.activity_title || room).trim() || room,
-        room_mode: normalizeRoomMode(body.room_mode),
-        prompt_seed: String(body.prompt_seed || "").trim(),
-        incipit: String(body.incipit || "").trim(),
-        story_so_far: "",
-        writers: [],
-        current_writer_index: 0,
-        turn_ends_at: null,
-        turn_paused: false,
-        turn_remaining_ms: null,
-        version: 1,
-        updated_at: now(),
-        expires_at: now() + ttlHours * 3600 * 1000,
-        group_id: null,
-        room_index: null,
-      };
-
-      await saveRoom(room, state);
-      return res.json({ success: true, room });
-    }
-
-    if (action === "join") {
-      const room = normalizeKey(body.room);
-      const state = await getRoom(room);
-      if (!state) return res.status(404).json({ error: "room not found" });
-
-      const writerId = normalizeKey(body.writer_id) || `Writer ${state.writers.length + 1}`;
-      if (!state.writers.includes(writerId)) {
-        state.writers.push(writerId);
-        bump(state);
-        await saveRoom(room, state);
-      }
-      return res.json({ success: true, writer_id: writerId, room_state: state });
-    }
-
+    /* -------------------- LEGACY SINGLE ROOM -------------------- */
     if (action === "list_rooms") {
       if (!isAdmin) return res.status(401).json({ error: "admin only" });
       const ids = (await redis.smembers<string[]>(KEY_ROOMS_SET)) || [];
       const rooms: RoomSummary[] = [];
       for (const id of ids) {
-        const r = await getRoom(id, true);
-        if (r) rooms.push(toSummary(id, r));
+        const s = await getRoom(id, true);
+        if (s) rooms.push(toSummary(id, s));
       }
       rooms.sort((a, b) => b.updated_at - a.updated_at);
       return res.json({ success: true, rooms, now: now() });
@@ -944,12 +690,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!state.writers.length) return res.status(409).json({ error: "no writers yet" });
 
       const turnSeconds = clampNumber(body.turn_s, 180, 15, 600);
-      state.current_writer_index =
-        (state.current_writer_index + 1) % state.writers.length;
+      state.current_writer_index = (state.current_writer_index + 1) % state.writers.length;
       state.turn_paused = false;
       state.turn_remaining_ms = null;
       state.turn_ends_at = now() + turnSeconds * 1000;
-
       bump(state);
       await saveRoom(room, state);
       return res.json({ success: true, room_state: state });
@@ -1012,7 +756,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const currentWriter = state.writers[state.current_writer_index];
       if (writerId !== currentWriter) return res.status(403).json({ error: "not your turn" });
-
       if (state.turn_paused) return res.status(409).json({ error: "turn paused" });
       if (state.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
       if (state.turn_ends_at <= now()) return res.status(409).json({ error: "turn expired" });
@@ -1050,32 +793,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.json({ success: true, room_state: state });
     }
 
-    /*
-    ==================================================
-    GROUP LEGACY (batch su rooms[])
-    ==================================================
-    */
+    /* -------------------- LEGACY GROUP (batch) -------------------- */
     if (action === "group_next_turn") {
       if (!isAdmin) return res.status(401).json({ error: "admin only" });
       const rooms = parseRoomsArray(body.rooms);
       if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
-
       const turnSeconds = clampNumber(body.turn_s, 180, 15, 600);
       const results: GroupResult[] = [];
-
       for (const room of rooms) {
         try {
           const state = await getRoom(room);
-          if (!state) {
-            results.push({ room, ok: false, status: 404, error: "room not found" });
-            continue;
-          }
-          if (!state.writers.length) {
-            results.push({ room, ok: false, status: 409, error: "no writers yet" });
-            continue;
-          }
-          state.current_writer_index =
-            (state.current_writer_index + 1) % state.writers.length;
+          if (!state) { results.push({ room, ok: false, status: 404, error: "room not found" }); continue; }
+          if (!state.writers.length) { results.push({ room, ok: false, status: 409, error: "no writers yet" }); continue; }
+          state.current_writer_index = (state.current_writer_index + 1) % state.writers.length;
           state.turn_paused = false;
           state.turn_remaining_ms = null;
           state.turn_ends_at = now() + turnSeconds * 1000;
@@ -1093,23 +823,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!isAdmin) return res.status(401).json({ error: "admin only" });
       const rooms = parseRoomsArray(body.rooms);
       if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
-
       const results: GroupResult[] = [];
       for (const room of rooms) {
         try {
           const state = await getRoom(room);
-          if (!state) {
-            results.push({ room, ok: false, status: 404, error: "room not found" });
-            continue;
-          }
-          if (state.turn_paused) {
-            results.push({ room, ok: false, status: 409, error: "already paused" });
-            continue;
-          }
-          if (state.turn_ends_at == null) {
-            results.push({ room, ok: false, status: 409, error: "no active turn" });
-            continue;
-          }
+          if (!state) { results.push({ room, ok: false, status: 404, error: "room not found" }); continue; }
+          if (state.turn_paused) { results.push({ room, ok: false, status: 409, error: "already paused" }); continue; }
+          if (state.turn_ends_at == null) { results.push({ room, ok: false, status: 409, error: "no active turn" }); continue; }
           const remaining = Math.max(0, state.turn_ends_at - now());
           state.turn_paused = true;
           state.turn_remaining_ms = remaining;
@@ -1128,24 +848,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!isAdmin) return res.status(401).json({ error: "admin only" });
       const rooms = parseRoomsArray(body.rooms);
       if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
-
       const results: GroupResult[] = [];
       for (const room of rooms) {
         try {
           const state = await getRoom(room);
-          if (!state) {
-            results.push({ room, ok: false, status: 404, error: "room not found" });
-            continue;
-          }
+          if (!state) { results.push({ room, ok: false, status: 404, error: "room not found" }); continue; }
           if (!state.turn_paused || state.turn_remaining_ms == null) {
-            results.push({ room, ok: false, status: 409, error: "not paused" });
-            continue;
+            results.push({ room, ok: false, status: 409, error: "not paused" }); continue;
           }
           const remaining = Math.max(0, Number(state.turn_remaining_ms) || 0);
-          if (remaining <= 0) {
-            results.push({ room, ok: false, status: 409, error: "no remaining time" });
-            continue;
-          }
+          if (remaining <= 0) { results.push({ room, ok: false, status: 409, error: "no remaining time" }); continue; }
           state.turn_paused = false;
           state.turn_ends_at = now() + remaining;
           state.turn_remaining_ms = null;
@@ -1163,15 +875,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!isAdmin) return res.status(401).json({ error: "admin only" });
       const rooms = parseRoomsArray(body.rooms);
       if (!rooms.length) return res.status(400).json({ error: "missing rooms[]" });
-
       const results: GroupResult[] = [];
       for (const room of rooms) {
         try {
           const state = await getRoom(room);
-          if (!state) {
-            results.push({ room, ok: true, status: 200 });
-            continue;
-          }
+          if (!state) { results.push({ room, ok: true, status: 200 }); continue; }
           state.expires_at = now() - 1;
           state.turn_paused = true;
           state.turn_ends_at = null;
@@ -1186,18 +894,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.json({ success: results.every((r) => r.ok), results, now: now() });
     }
 
-    /*
-    ==================================================
-    GROUP V2
-    ==================================================
-    */
+    /* -------------------- GROUP V2 -------------------- */
     if (action === "create_group") {
       if (!isAdmin) return res.status(401).json({ error: "admin only" });
 
       const expectedWriters = clampNumber(body.expected_writers, 0, 2, 20);
-      if (expectedWriters < 2) {
-        return res.status(400).json({ error: "expected_writers must be 2..20" });
-      }
+      if (expectedWriters < 2) return res.status(400).json({ error: "expected_writers must be 2..20" });
+
       const totalTurns = clampNumber(body.total_turns, 0, 1, 200);
       if (totalTurns < expectedWriters || totalTurns % expectedWriters !== 0) {
         return res.status(400).json({
@@ -1211,13 +914,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const activityTitle =
         String(body.title || body.activity_title || groupId).trim() || groupId;
-
       const roomMode = normalizeRoomMode(body.room_mode);
       const promptSeed = String(body.prompt_seed || "").trim();
+      const defaultTurnS = clampNumber(body.turn_s, 180, 15, 600);
 
-      const roomsMeta: Array<{ title?: string; incipit?: string }> = Array.isArray(
-        body.rooms_meta
-      )
+      const roomsMeta: Array<{ title?: string; incipit?: string }> = Array.isArray(body.rooms_meta)
         ? body.rooms_meta
         : [];
       const inputTitles: string[] = Array.isArray(body.room_titles) ? body.room_titles : [];
@@ -1238,6 +939,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           prompt_seed: promptSeed,
           incipit: roomIncipit,
           story_so_far: "",
+          story_so_far_at_turn_start: "",
           writers: [],
           current_writer_index: 0,
           turn_ends_at: null,
@@ -1265,6 +967,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         writers: [],
         turn_number: 0,
         total_turns: totalTurns,
+        default_turn_s: defaultTurnS,
         turn_ends_at: null,
         turn_paused: false,
         turn_remaining_ms: null,
@@ -1301,7 +1004,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const assignments = computeAssignments(group);
       const assignment_details = computeAssignmentDetails(group);
 
-      // A1: extras_public NON espone più suggestion_in_flight_until (era leak cross-writer).
       const extras_public = group.extras
         ? {
             enabled: group.extras.config.enabled,
@@ -1320,6 +1022,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         assignments,
         assignment_details,
         extras_public,
+        default_turn_s: group.default_turn_s,
         now: now(),
       });
     }
@@ -1333,8 +1036,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(409).json({ error: "group full" });
       }
 
-      const writerId =
-        normalizeKey(body.writer_id) || `Writer ${group.writers.length + 1}`;
+      const writerId = normalizeKey(body.writer_id) || `Writer ${group.writers.length + 1}`;
 
       if (group.writers.includes(writerId)) {
         return res.json({ success: true, writer_id: writerId, group_state: group });
@@ -1353,7 +1055,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           await saveRoom(roomName, roomState);
         }
       }
-
       return res.json({ success: true, writer_id: writerId, group_state: group });
     }
 
@@ -1381,9 +1082,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         assigned_room: assignedRoom,
         assigned_room_title: assignedRoomState?.activity_title || assignedRoom,
         assigned_room_incipit: assignedRoomState?.incipit || "",
+        story_so_far_frozen: assignedRoomState?.story_so_far_at_turn_start ?? "",
+        story_so_far_live: assignedRoomState?.story_so_far ?? "",
         room_state: assignedRoomState || null,
         turn_number: group.turn_number,
         total_turns: group.total_turns,
+        default_turn_s: group.default_turn_s,
         turn_ends_at: group.turn_ends_at,
         turn_paused: group.turn_paused,
         turn_remaining_ms: group.turn_remaining_ms,
@@ -1413,12 +1117,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const nextTurn = group.turn_number + 1;
-      console.log(
-        "[group] advance_turn group=%s turn=%d → next=%d",
-        groupId,
-        group.turn_number,
-        nextTurn
-      );
+      console.log("[group] advance_turn group=%s turn=%d → next=%d", groupId, group.turn_number, nextTurn);
 
       if (group.total_turns > 0 && nextTurn > group.total_turns) {
         group.status = "ended";
@@ -1441,7 +1140,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.json({ success: true, group_state: group, ended: true });
       }
 
-      const turnSeconds = clampNumber(body.turn_s, 180, 15, 600);
+      // turn_s: priorità body, poi default_turn_s del gruppo
+      const turnSeconds = clampNumber(body.turn_s, group.default_turn_s || 180, 15, 600);
       group.turn_number = nextTurn;
       group.status = "active";
       group.turn_paused = false;
@@ -1454,14 +1154,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       bump(group);
       await saveGroup(group);
 
-      const assignments = computeAssignments(group);
+      // Per OGNI stanza: aggiorna writer corrente E congela snapshot storia.
       for (const roomName of group.rooms) {
         const roomState = await getRoom(roomName);
         if (!roomState) continue;
+
+        // SNAPSHOT CONGELATO: la storia accumulata fino ad ora diventa il
+        // contenuto IMMUTABILE che i writer vedranno per tutto questo turno.
+        roomState.story_so_far_at_turn_start = roomState.story_so_far || "";
+
         const assignedWriter = findAssignedWriterForRoom(group, roomName);
         if (assignedWriter) {
-          const writerIndex = roomState.writers.indexOf(assignedWriter);
-          if (writerIndex >= 0) roomState.current_writer_index = writerIndex;
+          const wIdx = roomState.writers.indexOf(assignedWriter);
+          if (wIdx >= 0) roomState.current_writer_index = wIdx;
         }
         roomState.turn_paused = false;
         roomState.turn_remaining_ms = null;
@@ -1473,7 +1178,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.json({
         success: true,
         group_state: group,
-        assignments,
+        assignments: computeAssignments(group),
         assignment_details: computeAssignmentDetails(group),
         obligation_assigned: obligationAssigned,
         now: now(),
@@ -1486,11 +1191,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const group = await getGroup(groupId);
       if (!group) return res.status(404).json({ error: "group not found" });
 
-      let turnSeconds = 180;
-      if (group.turn_ends_at && !group.turn_paused) {
-        const remaining = Math.max(0, group.turn_ends_at - now());
-        if (remaining > 0) turnSeconds = Math.max(15, Math.round(remaining / 1000));
-      }
+      // SEMPRE default_turn_s (o body.turn_s esplicito), MAI il residuo.
+      const turnSeconds = clampNumber(body.turn_s, group.default_turn_s || 180, 15, 600);
       body.action = "group_advance_turn";
       body.turn_s = turnSeconds;
       return handler(req, res);
@@ -1510,7 +1212,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       group.turn_remaining_ms = remaining;
       group.turn_ends_at = null;
       group.status = "paused";
-
       bump(group);
       await saveGroup(group);
 
@@ -1542,7 +1243,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       group.turn_ends_at = now() + remaining;
       group.turn_remaining_ms = null;
       group.status = "active";
-
       bump(group);
       await saveGroup(group);
 
@@ -1568,7 +1268,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const writerIndex = group.writers.indexOf(writerId);
       if (writerIndex < 0) return res.status(403).json({ error: "writer not in group" });
-
       if (group.turn_number <= 0) return res.status(409).json({ error: "no active turn" });
       if (group.turn_paused) return res.status(409).json({ error: "turn paused" });
       if (group.status !== "active") return res.status(409).json({ error: "group not active" });
@@ -1588,14 +1287,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const roomState = await getRoom(targetRoom);
       if (!roomState) return res.status(404).json({ error: "assigned room not found" });
 
-      // EXTRAS: marker invisibile per tracciare l'obbligo (filtrato dal client).
+      // EXTRAS marker
       let textToAppend = text;
       const obligationEntry = findCurrentObligationFor(group, writerId);
       if (obligationEntry) {
-        const marker = `<!--OBLIGATION:${obligationEntry.obligation_id}-->`;
+        const marker = `<!-- obligation:${obligationEntry.id} -->`;
         textToAppend = `${text}\n${marker}`;
       }
 
+      // Solo story_so_far (live) viene aggiornato. story_so_far_at_turn_start
+      // resta CONGELATO fino al prossimo group_advance_turn.
       roomState.story_so_far =
         (roomState.story_so_far ? `${roomState.story_so_far}\n` : "") + textToAppend;
       bump(roomState);
@@ -1642,22 +1343,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.json({ success: true });
     }
 
-    /*
-    ==================================================
-    EXTRAS - SUGGERIMENTI / OBBLIGHI / Q&A
-    ==================================================
-    */
-
-    /**
-     * group_request_suggestion
-     * body: { group_id, writer_id }
-     * A1: scrive flight per-writer; ritorna `requested_by`.
-     */
+    /* -------------------- EXTRAS -------------------- */
     if (action === "group_request_suggestion") {
       const groupId = normalizeKey(body.group_id);
       const writerId = normalizeKey(body.writer_id);
       const group = await getGroup(groupId);
-
       if (!group) return res.status(404).json({ error: "group not found" });
       if (!group.extras || !group.extras.config.enabled) {
         return res.status(409).json({ error: "extras disabled for this group" });
@@ -1694,19 +1384,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         until: flightUntil,
         turn: group.turn_number,
       };
-      // legacy: NON usare più lato client per decidere chi vede cosa.
       group.extras.suggestion_in_flight_until = flightUntil;
 
       bump(group);
       await saveGroup(group);
 
-      console.log(
-        "[extras] suggestion writer=%s turn=%d id=%s",
-        writerId,
-        group.turn_number,
-        picked.id
-      );
-
+      console.log("[extras] suggestion writer=%s turn=%d id=%s", writerId, group.turn_number, picked.id);
       return res.json({
         success: true,
         requested_by: writerId,
@@ -1718,18 +1401,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    /**
-     * group_get_my_extras
-     * body: { group_id, writer_id }
-     * A1: suggestion_in_flight_until = solo per il writer chiamante.
-     *     notify_others_until = max scadenza degli altri writer (per banner passivo).
-     *     suggestion_used.is_current_turn = true se appartiene al turno corrente.
-     */
     if (action === "group_get_my_extras") {
       const groupId = normalizeKey(body.group_id);
       const writerId = normalizeKey(body.writer_id);
       const group = await getGroup(groupId);
-
       if (!group) return res.status(404).json({ error: "group not found" });
       if (!group.writers.includes(writerId)) {
         return res.status(403).json({ error: "writer not in group" });
@@ -1737,20 +1412,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       if (!group.extras || !group.extras.config.enabled) {
         return res.json({
-          success: true,
-          enabled: false,
-          suggestions_enabled: false,
-          obligations_enabled: false,
-          qa_enabled: false,
-          suggestion_used: null,
-          current_obligation: null,
-          qa_inbox: [],
-          qa_outbox: [],
-          suggestion_in_flight_until: null,
-          notify_others_until: null,
-          notify_seconds: 0,
-          suggestions_remaining: 0,
-          obligations_remaining: 0,
+          success: true, enabled: false,
+          suggestions_enabled: false, obligations_enabled: false, qa_enabled: false,
+          suggestion_used: null, current_obligation: null,
+          qa_inbox: [], qa_outbox: [],
+          suggestion_in_flight_until: null, notify_others_until: null, notify_seconds: 0,
+          suggestions_remaining: 0, obligations_remaining: 0,
         });
       }
 
@@ -1763,22 +1430,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const qa_inbox = group.extras.qa_threads.filter((m) => m.to_writer === writerId);
       const qa_outbox = group.extras.qa_threads.filter((m) => m.from_writer === writerId);
 
-      // A1: my flight only (filtrato per turno corrente).
       const myFlight = group.extras.suggestion_in_flight_by_writer[writerId] || null;
       const my_in_flight_until =
         myFlight && myFlight.turn === group.turn_number && myFlight.until > now()
           ? myFlight.until
           : null;
 
-      // notify_others = max scadenza degli ALTRI writer per il turno corrente
       let notify_others_until: number | null = null;
       for (const w of Object.keys(group.extras.suggestion_in_flight_by_writer)) {
         if (w === writerId) continue;
         const f = group.extras.suggestion_in_flight_by_writer[w];
-        if (!f || f.turn !== group.turn_number) continue;
-        if (f.until <= now()) continue;
-        if (notify_others_until == null || f.until > notify_others_until) {
-          notify_others_until = f.until;
+        if (f && f.turn === group.turn_number && f.until > now()) {
+          if (notify_others_until == null || f.until > notify_others_until) {
+            notify_others_until = f.until;
+          }
         }
       }
 
@@ -1788,56 +1453,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         suggestions_enabled: group.extras.config.suggestions_enabled,
         obligations_enabled: group.extras.config.obligations_enabled,
         qa_enabled: group.extras.config.qa_enabled,
+        notify_seconds: group.extras.config.notify_seconds,
+        suggestions_remaining: group.extras.suggestions_pool.length,
+        obligations_remaining: group.extras.obligations_pool.length,
         suggestion_used,
         current_obligation,
         qa_inbox,
         qa_outbox,
         suggestion_in_flight_until: my_in_flight_until,
         notify_others_until,
-        notify_seconds: group.extras.config.notify_seconds,
-        suggestions_remaining: group.extras.suggestions_pool.length,
-        obligations_remaining: group.extras.obligations_pool.length,
       });
     }
 
-    /**
-     * group_send_qa
-     * body: { group_id, from_writer, to_writer, text|message|body, reply_to?, origin_suggestion_id? }
-     * A2: alias text/message/body, validazione chiara, errore "qa text empty".
-     */
     if (action === "group_send_qa") {
       const groupId = normalizeKey(body.group_id);
       const fromWriter = normalizeKey(body.from_writer);
       const toWriter = normalizeKey(body.to_writer);
-
-      const text = String(body.text ?? body.message ?? body.body ?? "")
-        .trim()
-        .slice(0, 500);
-
-      if (!fromWriter) {
-        return res.status(400).json({ error: "missing from_writer" });
-      }
-      if (!toWriter) {
-        return res.status(400).json({ error: "missing to_writer" });
-      }
-      if (!text) {
-        return res.status(400).json({
-          error: "qa text empty",
-          details: "Il messaggio Q&A non può essere vuoto.",
-        } satisfies ApiErrorBody);
-      }
-      if (fromWriter === toWriter) {
-        return res.status(400).json({ error: "cannot send to yourself" });
-      }
+      const text = String(body.text || body.message || body.body || "").trim();
 
       const group = await getGroup(groupId);
       if (!group) return res.status(404).json({ error: "group not found" });
-      if (!group.extras || !group.extras.config.enabled) {
-        return res.status(409).json({ error: "extras disabled for this group" });
+      if (!group.extras || !group.extras.config.enabled || !group.extras.config.qa_enabled) {
+        return res.status(409).json({ error: "qa disabled" });
       }
-      if (!group.extras.config.qa_enabled) {
-        return res.status(409).json({ error: "qa disabled for this group" });
-      }
+      if (!fromWriter || !toWriter) return res.status(400).json({ error: "missing writer" });
+      if (!text) return res.status(400).json({ error: "qa text empty" });
       if (!group.writers.includes(fromWriter)) {
         return res.status(403).json({ error: "from_writer not in group" });
       }
@@ -1850,49 +1490,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         from_writer: fromWriter,
         to_writer: toWriter,
         body: text,
-        reply_to: body.reply_to ? String(body.reply_to) : null,
-        origin_suggestion_id: body.origin_suggestion_id
-          ? String(body.origin_suggestion_id)
-          : null,
+        reply_to: body.reply_to || null,
+        origin_suggestion_id: body.origin_suggestion_id || null,
         created_at: now(),
       };
       group.extras.qa_threads.push(msg);
-
       bump(group);
       await saveGroup(group);
 
-      console.log(
-        "[qa] from=%s to=%s len=%d group=%s",
-        fromWriter,
-        toWriter,
-        text.length,
-        groupId
-      );
-
+      console.log("[qa] from=%s to=%s len=%d group=%s", fromWriter, toWriter, text.length, groupId);
       return res.json({ success: true, message: msg });
     }
 
-    /**
-     * group_su_extras_view (admin)
-     * body: { group_id }
-     */
     if (action === "group_su_extras_view") {
       if (!isAdmin) return res.status(401).json({ error: "admin only" });
       const groupId = normalizeKey(body.group_id);
       const group = await getGroup(groupId);
       if (!group) return res.status(404).json({ error: "group not found" });
-
-      return res.json({
-        success: true,
-        group_id: groupId,
-        writers: group.writers,
-        turn_number: group.turn_number,
-        total_turns: group.total_turns,
-        extras: group.extras || null,
-      });
+      return res.json({ success: true, extras: group.extras || null });
     }
 
-    return res.status(400).json({ error: "unknown action" });
+    return res.status(400).json({ error: `unknown action: ${action}` });
   } catch (err) {
     return handleServerError(res, err);
   }

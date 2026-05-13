@@ -1297,8 +1297,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       // Solo story_so_far (live) viene aggiornato. story_so_far_at_turn_start
       // resta CONGELATO fino al prossimo group_advance_turn.
-      roomState.story_so_far =
-        (roomState.story_so_far ? `${roomState.story_so_far}\n` : "") + textToAppend;
+      // MOD v5.1: separatore "\n\n" tra contributi di writer diversi
+      // per consentire al client di isolare l'ultimo contributo.
+      const _prevSSF = (roomState.story_so_far || "").trim();
+      const _nextSSF = textToAppend.trim();
+      roomState.story_so_far = _prevSSF ? `${_prevSSF}\n\n${_nextSSF}` : _nextSSF;
       bump(roomState);
       await saveRoom(targetRoom, roomState);
 

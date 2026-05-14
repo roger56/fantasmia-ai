@@ -897,32 +897,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     /* -------------------- GROUP V2 -------------------- */
     if (action === "create_group") {
       if (!isAdmin) return res.status(401).json({ error: "admin only" });
-
       const expectedWriters = clampNumber(body.expected_writers, 0, 2, 20);
       if (expectedWriters < 2) return res.status(400).json({ error: "expected_writers must be 2..20" });
-
       const totalTurns = clampNumber(body.total_turns, 0, 1, 200);
       if (totalTurns < expectedWriters || totalTurns % expectedWriters !== 0) {
         return res.status(400).json({
           error: `total_turns must be a positive multiple of expected_writers (got ${totalTurns}, N=${expectedWriters})`,
         });
       }
-
       const ttlHours = clampNumber(body.ttl_h, 12, 1, 24);
       const expiresAt = now() + ttlHours * 3600 * 1000;
       const groupId = `grp-${crypto.randomBytes(3).toString("hex")}`;
-
       const activityTitle =
         String(body.title || body.activity_title || groupId).trim() || groupId;
       const roomMode = normalizeRoomMode(body.room_mode);
       const promptSeed = String(body.prompt_seed || "").trim();
       const defaultTurnS = clampNumber(body.turn_s, 180, 15, 600);
-
       const roomsMeta: Array<{ title?: string; incipit?: string }> = Array.isArray(body.rooms_meta)
         ? body.rooms_meta
         : [];
       const inputTitles: string[] = Array.isArray(body.room_titles) ? body.room_titles : [];
-
       const roomNames: string[] = [];
       for (let i = 1; i <= expectedWriters; i++) {
         const roomName = `${groupId}-${i}`;
@@ -931,15 +925,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           String(meta.title || inputTitles[i - 1] || `${activityTitle} #${i}`).trim() ||
           `Stanza ${i}`;
         const roomIncipit = String(meta.incipit || "").trim();
-
+        // SEED: l'incipit diventa la prima riga narrativa reale della storia.
+        // Viene scritto sia in story_so_far (live) sia nello snapshot congelato
+        // così è subito visibile al SU e ai writer dal turno 1.
+        const seededStory = roomIncipit;
         const roomState: RoomState = {
           room_name: roomName,
           activity_title: roomTitle,
           room_mode: roomMode,
           prompt_seed: promptSeed,
           incipit: roomIncipit,
-          story_so_far: "",
-          story_so_far_at_turn_start: "",
+          story_so_far: seededStory,
+          story_so_far_at_turn_start: seededStory,
           writers: [],
           current_writer_index: 0,
           turn_ends_at: null,
@@ -954,9 +951,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         await saveRoom(roomName, roomState);
         roomNames.push(roomName);
       }
-
       const extras = parseExtrasConfigFromBody(body.extras_config, expectedWriters, totalTurns);
-
       const groupState: GroupState = {
         group_id: groupId,
         activity_title: activityTitle,
@@ -979,9 +974,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         updated_at: now(),
         expires_at: expiresAt,
       };
-
       await saveGroup(groupState);
       return res.json({ success: true, group_id: groupId, group_state: groupState });
+
     }
 
     if (action === "list_groups") {

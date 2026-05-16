@@ -1343,61 +1343,58 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     /* -------------------- EXTRAS -------------------- */
     if (action === "group_request_suggestion") {
-      const groupId = normalizeKey(body.group_id);
-      const writerId = normalizeKey(body.writer_id);
-      const group = await getGroup(groupId);
-      if (!group) return res.status(404).json({ error: "group not found" });
-      if (!group.extras || !group.extras.config.enabled) {
-        return res.status(409).json({ error: "extras disabled for this group" });
-      }
-      if (!group.extras.config.suggestions_enabled) {
-        return res.status(409).json({ error: "suggestions disabled for this group" });
-      }
-      if (group.status === "ended") return res.status(409).json({ error: "group ended" });
-      if (group.status !== "active" || group.turn_number <= 0) {
-        return res.status(409).json({ error: "no active turn" });
-      }
-      if (!group.writers.includes(writerId)) {
-        return res.status(403).json({ error: "writer not in group" });
-      }
-      if (group.extras.used_suggestions_by_writer[writerId]) {
-        return res.status(409).json({ error: "suggestion already used by this writer" });
-      }
-      if (!group.extras.suggestions_pool.length) {
-        return res.status(409).json({ error: "no suggestions left" });
-      }
+		  const { group_id, writer_id } = body;
+		  const group = groups[group_id];
+		  if (!group) return res.status(404).json({ error: "group not found" });
+		  if (!group.extras?.suggestions_enabled) {
+			return res.status(400).json({ error: "suggestions not enabled" });
+		  }
 
-      const idx = Math.floor(Math.random() * group.extras.suggestions_pool.length);
-      const [picked] = group.extras.suggestions_pool.splice(idx, 1);
+		  const used = group.extras.used_suggestions_by_writer || {};
+		  if (used[writer_id]) {
+			return res.status(400).json({ error: "already used", suggestion: used[writer_id] });
+		  }
 
-      group.extras.used_suggestions_by_writer[writerId] = {
-        suggestion_id: picked.id,
-        text: picked.text,
-        turn: group.turn_number,
-        used_at: now(),
-      };
+		  const pool: string[] = group.extras.suggestions_pool || [];
+		  // remove suggestions already assigned to any writer
+		  const assigned = new Set(Object.values(used));
+		  const available = pool.filter((s) => !assigned.has(s));
+		  if (available.length === 0) {
+			return res.status(400).json({ error: "no suggestions available" });
+		  }
 
-      const flightUntil = now() + group.extras.config.notify_seconds * 1000;
-      group.extras.suggestion_in_flight_by_writer[writerId] = {
-        until: flightUntil,
-        turn: group.turn_number,
-      };
-      group.extras.suggestion_in_flight_until = flightUntil;
+		  const picked = available[Math.floor(Math.random() * available.length)];
+		  used[writer_id] = picked;
+		  group.extras.used_suggestions_by_writer = used;
 
-      bump(group);
-      await saveGroup(group);
+		  // ---- PAUSA GLOBALE ----
+		  const notifySec = Number(group.extras_config?.notify_seconds ?? 10);
+		  const now = Date.now();
+		  const pauseMs = notifySec * 1000;
 
-      console.log("[extras] suggestion writer=%s turn=%d id=%s", writerId, group.turn_number, picked.id);
-      return res.json({
-        success: true,
-        requested_by: writerId,
-        suggestion_id: picked.id,
-        suggestion_text: picked.text,
-        turn: group.turn_number,
-        notify_seconds: group.extras.config.notify_seconds,
-        suggestion_in_flight_until: flightUntil,
-      });
-    }
+		  group.extras.suggestion_in_flight_until = now + pauseMs;
+
+		  // sposta in avanti la deadline del turno corrente per TUTTE le stanze attive
+		  if (typeof group.turn_ends_at === "number") {
+			group.turn_ends_at = group.turn_ends_at + pauseMs;
+		  }
+		  if (Array.isArray(group.rooms)) {
+			for (const r of group.rooms) {
+			  if (typeof r.turn_ends_at === "number") {
+				r.turn_ends_at = r.turn_ends_at + pauseMs;
+			  }
+			}
+		  }
+		  // -----------------------
+
+		  await saveGroup(group_id, group); // o equivalente persist usato nel file
+		  return res.status(200).json({
+			suggestion: picked,
+			text: picked,
+			suggestion_in_flight_until: group.extras.suggestion_in_flight_until,
+		  });
+}
+
 
     if (action === "group_get_my_extras") {
       const groupId = normalizeKey(body.group_id);

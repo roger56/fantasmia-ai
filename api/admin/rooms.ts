@@ -1503,6 +1503,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const groupId = normalizeKey(body.group_id);
       const group = await getGroup(groupId);
       if (!group) return res.status(404).json({ error: "group not found" });
+		const extras = (await redis.get(`group:${group_id}:extras`)) || {};
+
+		const payload = {
+		  config: extras.config || { enabled: false },
+		  obligations_log: extras.obligations_log || [],
+		  used_suggestions_by_writer: extras.used_suggestions_by_writer || {},
+		  suggestions_log: extras.suggestions_log || [],   // NUOVO
+		  qa_threads: (extras.qa_threads || []).map((m: any) => ({
+			id: m.id,
+			from_writer: m.from_writer,
+			to_writer: m.to_writer,
+			text: m.text ?? "",                            // garantisce non-undefined
+			ts: m.ts || 0,
+			turn_number: m.turn_number ?? null,            // NUOVO
+			room: m.room ?? null,                          // NUOVO
+		  })),
+		};
+
+		return res.status(200).json({ ok: true, extras: payload });
+
       return res.json({ success: true, extras: group.extras || null });
     }
 

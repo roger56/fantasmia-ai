@@ -1,8 +1,24 @@
 // api/admin/rooms.ts
 /*
 ==================================================
-FantasMIA / Fantasmia - API ROOMS / GROUPS  (v5)
+FantasMIA / Fantasmia - API ROOMS / GROUPS  (v6)
 ==================================================
+
+CHANGELOG v6 (rispetto a v5)
+- NEW action `group_end`: soft-end del gruppo per il comando SU
+  "Termina gruppo". Setta status="ended", congela timer, estende
+  expires_at di 24h. I writer continuano a leggere group_state e
+  vedono ended → EndedScreen (niente piu' 404 → 0/0).
+- FIX `group_su_extras_view`: usava variabile `group_id` inesistente
+  e leggeva da chiave Redis mai scritta. Ora legge da group.extras
+  correttamente e include suggestions_log.
+- FIX `group_request_suggestion`: usava `groups[group_id]` in-memory
+  (non persistente). Ora usa getGroup/saveGroup, gestisce
+  group.rooms come string[], e fa push in extras.suggestions_log.
+- NEW type SuggestionLogEntry + ExtrasState.suggestions_log[].
+- FIX `join_group` su gruppo ended: se il writer e' gia' joined,
+  restituisce group_state (writer va su EndedScreen). I nuovi
+  writer restano rifiutati con 409.
 
 CHANGELOG v5 (rispetto a v4)
 - Rotazione BACKWARD: roomIndex = ((wi - (turn - 1)) mod N + N) mod N.
@@ -136,6 +152,15 @@ type ObligationLogEntry = {
   assigned_at: number;
 };
 
+type SuggestionLogEntry = {
+  turn: number;
+  writer_id: string;
+  suggestion_id: string;
+  text: string;
+  room: string | null;
+  ts: number;
+};
+
 type QaMessage = {
   id: string;
   from_writer: string;
@@ -154,6 +179,7 @@ type ExtrasState = {
   obligations_pool: PoolItem[];
   used_suggestions_by_writer: Record<string, SuggestionUse>;
   obligations_log: ObligationLogEntry[];
+  suggestions_log: SuggestionLogEntry[];
   qa_threads: QaMessage[];
   /** @deprecated retrocompat */
   suggestion_in_flight_until: number | null;
@@ -439,6 +465,7 @@ function normalizeExtrasState(value: any): ExtrasState | null {
         ? value.used_suggestions_by_writer
         : {},
     obligations_log: Array.isArray(value.obligations_log) ? value.obligations_log : [],
+    suggestions_log: Array.isArray(value.suggestions_log) ? value.suggestions_log : [],
     qa_threads: Array.isArray(value.qa_threads) ? value.qa_threads : [],
     suggestion_in_flight_until:
       typeof value.suggestion_in_flight_until === "number"
@@ -604,6 +631,7 @@ function parseExtrasConfigFromBody(
     obligations_pool: obligationsPool,
     used_suggestions_by_writer: {},
     obligations_log: [],
+    suggestions_log: [],
     qa_threads: [],
     suggestion_in_flight_until: null,
     suggestion_in_flight_by_writer: {},
@@ -1027,12 +1055,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const groupId = normalizeKey(body.group_id);
       const group = await getGroup(groupId);
       if (!group) return res.status(404).json({ error: "group not found" });
-      if (group.status === "ended") return res.status(409).json({ error: "group ended" });
-      if (group.writers.length >= group.expected_writers) {
-        return res.status(409).json({ error: "group full" });
-      }
 
       const writerId = normalizeKey(body.writer_id) || `Writer ${group.writers.length + 1}`;
+
+      // Gruppo ended: se writer gia' joined, restituisci lo stato (client mostra EndedScreen).
+      // Solo i writer nuovi restano rifiutati.
+      if (group.status === "ended") {
+        if (group.writers.includes(writerId)) {
+          return res.json({ success: true, writer_id: writerId, group_state: group, ended: true });
+        }
+        return res.status(409).json({ error: "group ended" });
+      }
+      if (group.writers.length >= group.expected_writers && !group.writers.includes(writerId)) {
+        return res.status(409).json({ error: "group full" });
+      }
 
       if (group.writers.includes(writerId)) {
         return res.json({ success: true, writer_id: writerId, group_state: group });
@@ -1315,6 +1351,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
+    if (action === "group_end") {
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
+      const groupId = normalizeKey(body.group_id);
+      const group = await getGroup(groupId);
+      if (!group) return res.status(404).json({ error: "group not found" });
+      if (group.status === "ended") {
+        return res.json({ success: true, group_state: group, already_ended: true });
+      }
+      // Soft-end: setta ended, congela timer, MA estende expires_at di 24h.
+      // I writer continuano a leggere group_state per almeno 24h.
+      group.status = "ended";
+      group.turn_paused = false;
+      group.turn_ends_at = null;
+      group.turn_remaining_ms = null;
+      group.submitted_this_turn = [];
+      group.expires_at = now() + 24 * 60 * 60 * 1000;
+      bump(group);
+      await saveGroup(group);
+
+      for (const roomName of group.rooms) {
+        const rs = await getRoom(roomName);
+        if (!rs) continue;
+        rs.turn_ends_at = null;
+        rs.turn_paused = false;
+        rs.turn_remaining_ms = null;
+        rs.expires_at = group.expires_at;
+        bump(rs);
+        await saveRoom(roomName, rs);
+      }
+      console.log("[group] end group=%s", groupId);
+      return res.json({ success: true, group_state: group });
+    }
+
     if (action === "delete_group") {
       if (!isAdmin) return res.status(401).json({ error: "admin only" });
       const groupId = normalizeKey(body.group_id);
@@ -1344,58 +1413,98 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     /* -------------------- EXTRAS -------------------- */
     if (action === "group_request_suggestion") {
-		  const { group_id, writer_id } = body;
-		  const group = groups[group_id];
-		  if (!group) return res.status(404).json({ error: "group not found" });
-		  if (!group.extras?.suggestions_enabled) {
-			return res.status(400).json({ error: "suggestions not enabled" });
-		  }
+      const groupId = normalizeKey(body.group_id);
+      const writerId = normalizeKey(body.writer_id);
+      const group = await getGroup(groupId);
+      if (!group) return res.status(404).json({ error: "group not found" });
+      if (!group.extras || !group.extras.config.enabled || !group.extras.config.suggestions_enabled) {
+        return res.status(400).json({ error: "suggestions not enabled" });
+      }
+      if (!group.writers.includes(writerId)) {
+        return res.status(403).json({ error: "writer not in group" });
+      }
 
-		  const used = group.extras.used_suggestions_by_writer || {};
-		  if (used[writer_id]) {
-			return res.status(400).json({ error: "already used", suggestion: used[writer_id] });
-		  }
+      const used = group.extras.used_suggestions_by_writer || {};
+      if (used[writerId]) {
+        return res.status(400).json({
+          error: "already used",
+          suggestion: used[writerId].text,
+          text: used[writerId].text,
+        });
+      }
 
-		  const pool: string[] = group.extras.suggestions_pool || [];
-		  // remove suggestions already assigned to any writer
-		  const assigned = new Set(Object.values(used));
-		  const available = pool.filter((s) => !assigned.has(s));
-		  if (available.length === 0) {
-			return res.status(400).json({ error: "no suggestions available" });
-		  }
+      // Filtra il pool escludendo suggerimenti gia' assegnati ad ALTRI writer.
+      const assignedTexts = new Set(Object.values(used).map((u) => u.text));
+      const available = (group.extras.suggestions_pool || []).filter(
+        (p) => !assignedTexts.has(p.text)
+      );
+      if (available.length === 0) {
+        return res.status(400).json({ error: "no suggestions available" });
+      }
 
-		  const picked = available[Math.floor(Math.random() * available.length)];
-		  used[writer_id] = picked;
-		  group.extras.used_suggestions_by_writer = used;
+      const pickedIdx = Math.floor(Math.random() * available.length);
+      const picked = available[pickedIdx];
 
-		  // ---- PAUSA GLOBALE ----
-		  const notifySec = Number(group.extras_config?.notify_seconds ?? 10);
-		  const now = Date.now();
-		  const pauseMs = notifySec * 1000;
+      const entry: SuggestionUse = {
+        suggestion_id: picked.id,
+        text: picked.text,
+        turn: group.turn_number,
+        used_at: now(),
+      };
+      used[writerId] = entry;
+      group.extras.used_suggestions_by_writer = used;
 
-		  group.extras.suggestion_in_flight_until = now + pauseMs;
+      // Traccia nel log per SU
+      const roomForWriter = computeAssignments(group)[writerId] || null;
+      group.extras.suggestions_log = [
+        ...(group.extras.suggestions_log || []),
+        {
+          turn: group.turn_number,
+          writer_id: writerId,
+          suggestion_id: picked.id,
+          text: picked.text,
+          room: roomForWriter,
+          ts: now(),
+        },
+      ];
 
-		  // sposta in avanti la deadline del turno corrente per TUTTE le stanze attive
-		  if (typeof group.turn_ends_at === "number") {
-			group.turn_ends_at = group.turn_ends_at + pauseMs;
-		  }
-		  if (Array.isArray(group.rooms)) {
-			for (const r of group.rooms) {
-			  if (typeof r.turn_ends_at === "number") {
-				r.turn_ends_at = r.turn_ends_at + pauseMs;
-			  }
-			}
-		  }
-		  // -----------------------
+      // Pausa globale: sposta in avanti la deadline del turno per gruppo + stanze.
+      const notifySec = Number(group.extras.config.notify_seconds ?? 10);
+      const pauseMs = Math.max(0, notifySec) * 1000;
+      const flightUntil = now() + pauseMs;
+      group.extras.suggestion_in_flight_until = flightUntil;
+      (group.extras.suggestion_in_flight_by_writer as any) = group.extras.suggestion_in_flight_by_writer || {};
+      group.extras.suggestion_in_flight_by_writer[writerId] = {
+        until: flightUntil,
+        turn: group.turn_number,
+      };
 
-		  await saveGroup(group_id, group); // o equivalente persist usato nel file
-		  return res.status(200).json({
-			suggestion: picked,
-			text: picked,
-			suggestion_in_flight_until: group.extras.suggestion_in_flight_until,
-		  });
-}
+      if (pauseMs > 0 && typeof group.turn_ends_at === "number") {
+        group.turn_ends_at = group.turn_ends_at + pauseMs;
+      }
 
+      bump(group);
+      await saveGroup(group);
+
+      if (pauseMs > 0) {
+        for (const roomName of group.rooms) {
+          const rs = await getRoom(roomName);
+          if (!rs || typeof rs.turn_ends_at !== "number") continue;
+          rs.turn_ends_at = rs.turn_ends_at + pauseMs;
+          bump(rs);
+          await saveRoom(roomName, rs);
+        }
+      }
+
+      console.log("[extras] suggestion turn=%d writer=%s id=%s", group.turn_number, writerId, picked.id);
+      return res.status(200).json({
+        success: true,
+        suggestion: picked.text,
+        text: picked.text,
+        suggestion_id: picked.id,
+        suggestion_in_flight_until: flightUntil,
+      });
+    }
 
     if (action === "group_get_my_extras") {
       const groupId = normalizeKey(body.group_id);
@@ -1503,27 +1612,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const groupId = normalizeKey(body.group_id);
       const group = await getGroup(groupId);
       if (!group) return res.status(404).json({ error: "group not found" });
-		const extras = (await redis.get(`group:${group_id}:extras`)) || {};
 
-		const payload = {
-		  config: extras.config || { enabled: false },
-		  obligations_log: extras.obligations_log || [],
-		  used_suggestions_by_writer: extras.used_suggestions_by_writer || {},
-		  suggestions_log: extras.suggestions_log || [],   // NUOVO
-		  qa_threads: (extras.qa_threads || []).map((m: any) => ({
-			id: m.id,
-			from_writer: m.from_writer,
-			to_writer: m.to_writer,
-			text: m.text ?? "",                            // garantisce non-undefined
-			ts: m.ts || 0,
-			turn_number: m.turn_number ?? null,            // NUOVO
-			room: m.room ?? null,                          // NUOVO
-		  })),
-		};
+      const extras = group.extras;
+      if (!extras) {
+        return res.json({
+          ok: true,
+          extras: {
+            config: { enabled: false, suggestions_enabled: false, obligations_enabled: false, qa_enabled: false, notify_seconds: 0 },
+            obligations_log: [],
+            suggestions_log: [],
+            used_suggestions_by_writer: {},
+            qa_threads: [],
+          },
+        });
+      }
 
-		return res.status(200).json({ ok: true, extras: payload });
-
-      return res.json({ success: true, extras: group.extras || null });
+      const payload = {
+        config: extras.config,
+        obligations_log: extras.obligations_log || [],
+        suggestions_log: extras.suggestions_log || [],
+        used_suggestions_by_writer: extras.used_suggestions_by_writer || {},
+        qa_threads: (extras.qa_threads || []).map((m: any) => ({
+          id: m.id,
+          from_writer: m.from_writer,
+          to_writer: m.to_writer,
+          text: m.body ?? m.text ?? "",
+          ts: m.created_at ?? m.ts ?? 0,
+          turn_number: m.turn_number ?? null,
+          room: m.room ?? null,
+        })),
+      };
+      return res.json({ ok: true, extras: payload, success: true });
     }
 
     return res.status(400).json({ error: `unknown action: ${action}` });

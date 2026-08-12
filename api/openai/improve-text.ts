@@ -6,15 +6,15 @@ import OpenAI from "openai";
 const cors = Cors({
   origin: (origin, callback) => {
     const allowedDomains = [
-      ".lovableproject.com",
-      ".lovable.app",
-      ".lovable.dev",
-      "lovable.dev",
-      "fantasmia.it",
-      "www.fantasmia.it",
-      "localhost",
-	  "fantasmia-web-"
-    ];
+  ".lovableproject.com",
+  ".lovable.app",
+  ".lovable.dev",
+  "lovable.dev",
+  "fantasmia.it",
+  "www.fantasmia.it",
+  "localhost",
+  "fantasmia-web-"
+];
 
     if (!origin || allowedDomains.some((d) => origin.includes(d))) {
       callback(null, true);

@@ -52,12 +52,17 @@ const allowedOrigins: Array<string | RegExp> = [
   "https://www.fantasmia.it",
   "https://fantas-ia.it",
   "https://www.fantas-ia.it",
+
+  // Preview Vercel del frontend Fantasmia
+  /^https:\/\/fantasmia-web-.*\.vercel\.app$/,
+
   /^https:\/\/.*\.lovableproject\.com$/,
   /^https:\/\/.*\.lovable\.app$/,
   "https://lovable.app",
   "https://www.lovable.app",
   "https://lovable.dev",
   /^https:\/\/.*\.lovable\.dev$/,
+
   "http://localhost:5173",
   "http://localhost:3000",
 ];

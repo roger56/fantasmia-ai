@@ -5,11 +5,12 @@ import { NextApiRequest, NextApiResponse } from 'next';
 const cors = Cors({
   origin: (origin, callback) => {
     const allowedDomains = [
-      '.lovableproject.com',
-      '.lovable.app',
-      'fantasmia.it',
-      'localhost'
-    ];
+  '.lovableproject.com',
+  '.lovable.app',
+  'fantasmia.it',
+  'localhost',
+  'fantasmia-web-'
+];
     if (!origin || allowedDomains.some(domain => origin.includes(domain))) {
       callback(null, true);
     } else {

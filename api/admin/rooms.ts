@@ -703,6 +703,64 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     /* -------------------- LEGACY SINGLE ROOM -------------------- */
+	/* -------------------- CREATE SINGLE ROOM -------------------- */
+if (action === "create") {
+  if (!isAdmin) {
+    return res.status(401).json({ error: "admin only" });
+  }
+
+  const roomName = normalizeKey(body.room_name);
+  const room = roomName || shortId("room");
+
+  const activityTitle =
+    normalizeKey(body.activity_title) || roomName || room;
+
+  const roomMode = normalizeRoomMode(body.room_mode);
+  const promptSeed = String(body.prompt_seed || "").trim();
+  const incipit = String(body.incipit || "").trim();
+
+  const ttlHours = clampNumber(body.ttl_h, 4, 1, 24);
+  const createdAt = now();
+
+  // Evita di sovrascrivere accidentalmente una stanza ancora attiva
+  const existing = await getRoom(room);
+  if (existing) {
+    return res.status(409).json({ error: "room already exists" });
+  }
+
+  const state: RoomState = {
+    room_name: roomName || room,
+    activity_title: activityTitle,
+    room_mode: roomMode,
+    prompt_seed: promptSeed,
+    incipit,
+    story_so_far: incipit,
+    story_so_far_at_turn_start: incipit,
+
+    writers: [],
+    current_writer_index: 0,
+
+    turn_ends_at: null,
+    turn_paused: false,
+    turn_remaining_ms: null,
+
+    version: 1,
+    updated_at: createdAt,
+    expires_at: createdAt + ttlHours * 3600 * 1000,
+
+    group_id: null,
+    room_index: null,
+  };
+
+  await saveRoom(room, state);
+
+  return res.json({
+    success: true,
+    room,
+    expires_at: state.expires_at,
+    room_state: state,
+  });
+}
     if (action === "list_rooms") {
       if (!isAdmin) return res.status(401).json({ error: "admin only" });
       const ids = (await redis.smembers<string[]>(KEY_ROOMS_SET)) || [];

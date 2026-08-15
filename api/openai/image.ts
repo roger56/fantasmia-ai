@@ -123,15 +123,17 @@ if (style === 'sketch') {
 
     console.log(`Generating image - Style: ${style}, Prompt length: ${prompt.length}, Final length: ${finalPrompt.length}`);
 
-    // 4. GENERAZIONE IMMAGINE - FORMATO BASE64
+       // 4. GENERAZIONE IMMAGINE - FORMATO BASE64
     const response = await client.images.generate({
-      model: "dall-e-3",
+      model: "gpt-image-1",
       prompt: finalPrompt,
       n: 1,
       size: "1024x1024",
-      quality: "standard",
-      response_format: "b64_json"
+      quality: "medium"
     });
+
+    // Controllo per i dati base64
+    const imageBase64 = response.data?.[0]?.b64_json;
 
     // Controllo per i dati base64
     const imageBase64 = response.data?.[0]?.b64_json;

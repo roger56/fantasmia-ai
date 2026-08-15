@@ -56,6 +56,7 @@ type Body = { token?: string };
 const allowedOrigins: Array<string | RegExp> = [
   "https://fantasmia.it",
   "https://www.fantasmia.it",
+  "https://fantasmia-web.vercel.app",
   // Preview Vercel del frontend Fantasmia
 /^https:\/\/fantasmia-web-.*\.vercel\.app$/,
   /^https:\/\/.*\.lovableproject\.com$/,

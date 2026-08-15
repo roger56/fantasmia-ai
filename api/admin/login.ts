@@ -1,4 +1,4 @@
-﻿// api/admin/login.ts
+// api/admin/login.ts
 /*
   ==================================================
   FantasMIA / Fantasmia - API ADMIN LOGIN
@@ -33,9 +33,9 @@
       fantas-ia.it
       www.fantas-ia.it
 
-  - DEFAULT_HUB_URL Ã¨ opzionale.
+  - DEFAULT_HUB_URL è opzionale.
     Se contiene un IP locale tipo 192.168.x.x, ha senso per il client locale,
-    ma non Ã¨ raggiungibile direttamente da Vercel.
+    ma non è raggiungibile direttamente da Vercel.
 
   SICUREZZA
 
@@ -91,7 +91,7 @@ type Body =
   CORS
   ==================================================
 
-  Con credenziali/cookie non si puÃ² usare "*".
+  Con credenziali/cookie non si può usare "*".
   Occorre riflettere solo gli origin autorizzati.
 
   Nuovi domini aggiunti:
@@ -104,7 +104,6 @@ const allowedOrigins: Array<string | RegExp> = [
   "https://fantas-ia.it",
   "https://www.fantas-ia.it",
   "https://fantasmia-web.vercel.app",
-
 
   // Preview Vercel del frontend Fantasmia
   /^https:\/\/fantasmia-web-.*\.vercel\.app$/,
@@ -377,7 +376,7 @@ function verifySuBearer(req: NextApiRequest): { ok: boolean; su_name?: string } 
   HUB URL
   ==================================================
 
-  PrioritÃ :
+  Priorità:
   1. hub_url salvato nel record SU/NSU
   2. DEFAULT_HUB_URL da Vercel env
 */
@@ -590,8 +589,8 @@ export default async function handler(
 
     Nota consumi Redis:
     - questa azione legge la lista NSU e poi un record per ogni NSU.
-    - Se l'elenco cresce molto, puÃ² consumare molte READ.
-    - Per ora manteniamo compatibilitÃ  con la struttura dati esistente.
+    - Se l'elenco cresce molto, può consumare molte READ.
+    - Per ora manteniamo compatibilità con la struttura dati esistente.
     ==================================================
   */
   if (body?.action === "nsu_list") {
@@ -812,7 +811,7 @@ export default async function handler(
     LEGACY ADMIN LOGIN
     ==================================================
 
-    CompatibilitÃ  con vecchio login ADMIN basato su password.
+    Compatibilità con vecchio login ADMIN basato su password.
     Consigliato impostare sempre ADMIN_PASSWORD_PLAIN in Vercel.
   */
   const password = String(body?.password ?? "").trim();

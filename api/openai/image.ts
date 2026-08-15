@@ -135,9 +135,6 @@ if (style === 'sketch') {
     // Controllo per i dati base64
     const imageBase64 = response.data?.[0]?.b64_json;
 
-    // Controllo per i dati base64
-    const imageBase64 = response.data?.[0]?.b64_json;
-
     if (!imageBase64) {
       throw new Error("No base64 image data returned from OpenAI");
     }

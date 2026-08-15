@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 
 const cors = Cors({
   origin: (origin, callback) => {
-    const allowed = [".lovableproject.com", ".lovable.app", "fantasmia.it", "localhost","fantasmia-web-"];
+    const allowed = [".lovableproject.com", ".lovable.app", "fantasmia.it", "localhost","fantasmia-web-","fantasmia-web.vercel.app",];
     if (!origin || allowed.some((d) => origin.includes(d))) callback(null, true);
     else callback(new Error("Not allowed by CORS"));
   },

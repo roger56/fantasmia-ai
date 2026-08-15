@@ -13,7 +13,8 @@ const cors = Cors({
   "fantasmia.it",
   "www.fantasmia.it",
   "localhost",
-  "fantasmia-web-"
+  "fantasmia-web-",
+  "fantasmia-web.vercel.app",
 ];
 
     if (!origin || allowedDomains.some((d) => origin.includes(d))) {

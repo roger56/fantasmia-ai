@@ -9,7 +9,8 @@ const cors = Cors({
   '.lovable.app',
   'fantasmia.it',
   'localhost',
-  'fantasmia-web-'
+  'fantasmia-web-',
+  'fantasmia-web.vercel.app',
 ];
     if (!origin || allowedDomains.some(domain => origin.includes(domain))) {
       callback(null, true);

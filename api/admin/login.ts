@@ -786,6 +786,7 @@ export default async function handler(
 
     const key = KEY_NSU(suName, nsuId);
     const stored = await redis.get<any>(key);
+	const suStored = await redis.get<any>(KEY_SU(suName));
 
     if (!stored?.hash_hex || !stored?.salt_hex) {
       return res.status(401).json({ error: "Invalid credentials" });
@@ -847,6 +848,7 @@ export default async function handler(
       su_name: suName,
       nsu_id: nsuId,
       display_name: stored.display_name,
+	  su_email: suStored?.su_email || "",
       token,
       role: "NSU",
       ...(hubUrl ? { hub_url: hubUrl } : {}),

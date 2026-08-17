@@ -87,6 +87,7 @@ type Body =
     hub_url?: string;
   }
   | { action: "su_login"; su_name?: string; su_password?: string }
+  | { action: "su_profile" }
   | { action: "nsu_create"; nsu_id?: string; nsu_pin?: string; display_name?: string; hub_url?: string }
   | { action: "nsu_list" }
   | { action: "nsu_disable"; nsu_id?: string; enabled?: boolean }
@@ -476,6 +477,34 @@ export default async function handler(
 	});
 
     return res.status(200).json({ success: true, token: "", role: "ADMIN" });
+  }
+
+   /*
+    ==================================================
+    ACTION: su_profile
+    Restituisce l'anagrafica del Superuser autenticato.
+    ==================================================
+  */
+  if (body?.action === "su_profile") {
+    const auth = verifySuBearer(req);
+
+    if (!auth.ok || !auth.su_name) {
+      return res.status(401).json({ error: "superuser only" });
+    }
+
+    const stored = await redis.get<any>(KEY_SU(auth.su_name));
+
+    if (!stored) {
+      return res.status(404).json({ error: "SU not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      su_name: stored.su_name,
+      su_email: stored.su_email || "",
+      su_cell: stored.su_cell || "",
+      hub_url: resolveHubUrl(stored),
+    });
   }
 
   /*

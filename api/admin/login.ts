@@ -78,7 +78,14 @@ type ApiErr = { error: string };
 
 type Body =
   | { password?: string; action?: undefined }
-  | { action: "su_create"; su_name?: string; su_password?: string; hub_url?: string }
+  | {
+    action: "su_create";
+    su_name?: string;
+    su_password?: string;
+    su_email?: string;
+    su_cell?: string;
+    hub_url?: string;
+  }
   | { action: "su_login"; su_name?: string; su_password?: string }
   | { action: "nsu_create"; nsu_id?: string; nsu_pin?: string; display_name?: string; hub_url?: string }
   | { action: "nsu_list" }
@@ -436,11 +443,20 @@ export default async function handler(
 
     const suName = normalizeSuName(body.su_name);
     const suPass = String(body.su_password || "").trim();
+	const suEmail = String(body.su_email || "").trim().toLowerCase();
+	const suCell = String(body.su_cell || "").trim();
     const hubUrlInput = String(body.hub_url || "").trim();
 
     if (!suName) {
       return res.status(400).json({ error: "missing su_name" });
     }
+	if (!suEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(suEmail)) {
+	  return res.status(400).json({ error: "missing/invalid su_email" });
+	}
+
+	if (!suCell || !/^\+?[\d\s-]{8,}$/.test(suCell)) {
+	  return res.status(400).json({ error: "missing/invalid su_cell" });
+	}
 
     if (!suPass) {
       return res.status(400).json({ error: "missing su_password" });
@@ -451,11 +467,13 @@ export default async function handler(
     const hubUrl = hubUrlInput || previous?.hub_url || undefined;
 
     await redis.set(KEY_SU(suName), {
-      su_name: suName,
-      ...passwordRecord,
-      updated_at: Date.now(),
-      ...(hubUrl ? { hub_url: hubUrl } : {}),
-    });
+	  su_name: suName,
+	  su_email: suEmail,
+	  su_cell: suCell,
+	  ...passwordRecord,
+	  updated_at: Date.now(),
+	  ...(hubUrl ? { hub_url: hubUrl } : {}),
+	});
 
     return res.status(200).json({ success: true, token: "", role: "ADMIN" });
   }

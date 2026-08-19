@@ -1,35 +1,47 @@
 /*
   ==================================================
   FantasMIA / Fantasmia - API CREATE LINK ONE-TIME NSU
-  (Fase 2 patch — supporto autenticazione SuperUser)
+  Autenticazione SUPERUSER + tracciabilità SU
   ==================================================
 
-  NOTA PER L'UTENTE:
-  Questo file va COPIATO nel repo Vercel `fantasmia-ai` al percorso:
-      pages/api/openai/create-link-one-time.ts
-  (sostituendo la versione precedente).
+  SCOPO
+  Questo endpoint crea link/token One-Time per NSU remoti.
 
-  ENV VARS RICHIESTE:
-    - ADMIN_JWT_SECRET    (già presente)
-    - NSU_ONE_TIME_SECRET (già presente)
-    - PUBLIC_BASE_URL     (già presente, opzionale)
-    - SU_SHARED_PASSWORD  (NUOVA) — password singola condivisa dai SuperUser.
-                                     Es. "ssss" o valore scelto in Vercel.
+  REGOLA ARCHITETTURALE
+  - SOLO un SUPERUSER autenticato può creare One-Time Token.
+  - ADMIN non può creare One-Time Token.
+  - Il SUPERUSER viene identificato tramite JWT firmato con ADMIN_JWT_SECRET.
+  - Il nome del SU (su_name) viene ricavato dal JWT verificato
+    e NON viene accettato dal body della richiesta.
 
-  DIFFERENZE RISPETTO ALLA VERSIONE PRECEDENTE:
-    1) L'autorizzazione ora ha DUE canali:
-       - ADMIN: header Authorization: Bearer <JWT> (comportamento invariato).
-       - SU:    body.password uguale a SU_SHARED_PASSWORD.
-       Se manca il Bearer si prova la SU password nel body.
-    2) Il body viene parsato PRIMA della verifica di autorizzazione,
-       così `verifySuPassword` può leggerlo.
-    3) I SU NON possono creare link permanenti: se `permanent: true`
-       viene inviato da un SU, la risposta è 403.
-       Gli ADMIN mantengono il pieno controllo (permanent OK).
-    4) Nel payload firmato viene aggiunto `created_by` ("ADMIN" | "SU")
-       per tracciabilità (usato dalla notifica email OT lato frontend).
-    5) Nessun'altra modifica: firma HMAC, CORS, formato risposta,
-       claim-link-one-time restano invariati.
+  TRACCIABILITÀ
+  Il payload One-Time firmato contiene anche:
+    - su_name: identificativo del SUPERUSER creatore
+    - created_by: "SU"
+
+  Questo consente di mantenere il legame:
+      One-Time Token -> NSU -> SUPERUSER
+
+  Il legame potrà essere utilizzato anche per:
+    - instradamento delle storie NSU verso l'archivio del SU corretto;
+    - attribuzione di utilizzi/consumi al SUPERUSER corretto;
+    - futura contabilizzazione dei costi associati ai token e ai servizi AI.
+
+  LINK PERMANENTI
+  I One-Time Token creati dai SUPERUSER non possono essere permanenti.
+  Una richiesta con permanent=true viene rifiutata con HTTP 403.
+
+  ENV VARS RICHIESTE
+    - ADMIN_JWT_SECRET
+      Segreto usato per verificare il JWT del SUPERUSER.
+    - NSU_ONE_TIME_SECRET
+      Segreto HMAC usato per firmare il One-Time Token.
+    - PUBLIC_BASE_URL
+      Base URL pubblica usata per costruire il link (opzionale).
+
+  NOTA
+  SU_SHARED_PASSWORD non viene più utilizzata da questo endpoint.
+  L'autenticazione legacy tramite password condivisa è stata rimossa.
 */
 
 import type { NextApiRequest, NextApiResponse } from "next";
@@ -38,6 +50,7 @@ import crypto from "crypto";
 type ApiOk = {
   ok: true;
   username: string;
+  su_name: string;
   ttl_h: number;
   invite_exp_at: string | null;
   token: string;
@@ -46,7 +59,7 @@ type ApiOk = {
   permanent: boolean;
   client_email?: string;
   su_email?: string;
-  created_by?: "ADMIN" | "SU";
+  created_by: "SU";
 };
 
 type ApiErr = { ok: false; error: string };
@@ -127,29 +140,42 @@ function safeEqual(a: string, b: string) {
 }
 
 // --------------------
-// ADMIN Bearer JWT verify (HS256)
+// SUPERUSER Bearer JWT verify (HS256)
+// Solo un SU autenticato può creare One-Time Token.
+// Il nome del SU viene ricavato dal JWT verificato e NON dal body.
 // --------------------
-function verifyAdminBearer(req: NextApiRequest): { ok: true } | { ok: false; error: string } {
+function verifySuBearer(
+  req: NextApiRequest
+): { ok: true; su_name: string } | { ok: false; error: string } {
   const secret = process.env.ADMIN_JWT_SECRET;
-  if (!secret) return { ok: false, error: "Missing ADMIN_JWT_SECRET" };
 
-  const auth = (req.headers.authorization || "").trim();
+  if (!secret) {
+    return { ok: false, error: "Missing ADMIN_JWT_SECRET" };
+  }
+
+  const auth = String(req.headers.authorization || "").trim();
+
   if (!auth.toLowerCase().startsWith("bearer ")) {
-    return { ok: false, error: "Missing Bearer token" };
+    return { ok: false, error: "Missing Superuser Bearer token" };
   }
 
   const token = auth.slice(7).trim();
   const parts = token.split(".");
-  if (parts.length !== 3) return { ok: false, error: "Invalid token format" };
+
+  if (parts.length !== 3) {
+    return { ok: false, error: "Invalid token format" };
+  }
 
   const [hB64, pB64, sig] = parts;
   const toSign = `${hB64}.${pB64}`;
   const expectedSig = signHS256(toSign, secret);
+
   if (!safeEqual(sig, expectedSig)) {
     return { ok: false, error: "Invalid token signature" };
   }
 
-  let payload: any = null;
+  let payload: any;
+
   try {
     payload = JSON.parse(b64urlToBuf(pB64).toString("utf8"));
   } catch {
@@ -158,23 +184,34 @@ function verifyAdminBearer(req: NextApiRequest): { ok: true } | { ok: false; err
 
   const nowSec = Math.floor(Date.now() / 1000);
   const exp = typeof payload?.exp === "number" ? payload.exp : 0;
-  if (!exp || nowSec >= exp) return { ok: false, error: "Token expired" };
-  if (payload?.role !== "ADMIN") return { ok: false, error: "Not an admin token" };
 
-  return { ok: true };
+  if (!exp || nowSec >= exp) {
+    return { ok: false, error: "Token expired" };
+  }
+
+  if (payload?.role !== "SUPERUSER") {
+    return { ok: false, error: "Superuser only" };
+  }
+
+  const suName =
+    typeof payload?.su_name === "string"
+      ? payload.su_name.trim().toLowerCase()
+      : "";
+
+  if (!suName) {
+    return { ok: false, error: "Missing su_name in Superuser token" };
+  }
+
+  return {
+    ok: true,
+    su_name: suName,
+  };
 }
 
 // --------------------
 // SU shared-password verify
 // --------------------
-function verifySuPassword(body: Body): { ok: true } | { ok: false; error: string } {
-  const expected = process.env.SU_SHARED_PASSWORD;
-  if (!expected) return { ok: false, error: "SU auth not configured" };
-  const provided = typeof body.password === "string" ? body.password : "";
-  if (!provided) return { ok: false, error: "Missing SU password" };
-  if (!safeEqual(provided, expected)) return { ok: false, error: "Invalid SU password" };
-  return { ok: true };
-}
+
 
 // --------------------
 // One-time token helpers
@@ -204,7 +241,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   if (!corsOk) return res.status(403).json({ ok: false, error: "CORS origin not allowed" });
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
 
-  // Body parsing PRIMA dell'autorizzazione (serve a verifySuPassword)
+// Parsing del body della richiesta
   let body: Body = {};
   try {
     body = (typeof req.body === "string" ? JSON.parse(req.body) : (req.body ?? {})) as Body;
@@ -212,18 +249,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     body = {};
   }
 
-  // ✅ Autorizzazione a due canali: ADMIN Bearer JWT OPPURE SU password
-  let caller: "ADMIN" | "SU";
-  const hasBearer = (req.headers.authorization || "").toLowerCase().startsWith("bearer ");
-  if (hasBearer) {
-    const adminCheck = verifyAdminBearer(req);
-    if (!adminCheck.ok) return res.status(401).json({ ok: false, error: adminCheck.error });
-    caller = "ADMIN";
-  } else {
-    const suCheck = verifySuPassword(body);
-    if (!suCheck.ok) return res.status(401).json({ ok: false, error: suCheck.error });
-    caller = "SU";
-  }
+  // Solo un SUPERUSER autenticato può creare One-Time Token.
+const suAuth = verifySuBearer(req);
+
+if (!suAuth.ok) {
+  return res.status(401).json({
+    ok: false,
+    error: suAuth.error,
+  });
+}
+
+	const suName = suAuth.su_name;
 
   const secret = process.env.NSU_ONE_TIME_SECRET;
   if (!secret) return res.status(500).json({ ok: false, error: "Missing NSU_ONE_TIME_SECRET" });
@@ -236,10 +272,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   // ⛔ SU non può creare link permanenti
   const requestedPermanent = body.permanent === true;
-  if (caller === "SU" && requestedPermanent) {
-    return res.status(403).json({ ok: false, error: "SU non può creare link permanenti" });
-  }
-  const permanent = requestedPermanent;
+
+if (requestedPermanent) {
+  return res.status(403).json({
+    ok: false,
+    error: "Il Superuser non può creare link permanenti",
+  });
+}
+
+const permanent = false;
 
   const client_email = normalizeOptionalString(body.client_email);
   const su_email = normalizeOptionalString(body.su_email);
@@ -253,6 +294,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     v: 2,
     type: "NSU_ONE_TIME",
     username,
+	su_name: suName,
     ttl_h,
     iat: now,
     invite_exp: invite_exp_ms,
@@ -260,7 +302,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     label,
     client_email,
     su_email,
-    created_by: caller, // "ADMIN" | "SU"
+    created_by: "SU",
   };
 
   const payloadJson = JSON.stringify(payload);
@@ -281,6 +323,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     permanent,
     client_email,
     su_email,
-    created_by: caller,
+	su_name: suName,
+    created_by: "SU",
   });
 }

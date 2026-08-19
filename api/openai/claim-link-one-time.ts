@@ -3,50 +3,72 @@ import crypto from "crypto";
 
 /*
 ==============================================================================
- Fantasmia — claim-link-one-time.ts  (patch allineata a create v:2)
+ Fantasmia — claim-link-one-time.ts
+ Validazione One-Time Token con tracciabilità SUPERUSER
 ==============================================================================
- File da copiare nel repo Vercel `fantasmia-ai` come:
-   pages/api/openai/claim-link-one-time.ts
 
- Endpoint stateless che valida un token OT (One-Time) firmato via HMAC.
- Il token è nel formato: <payloadB64url>.<hmacSig>
+ SCOPO
+ Questo endpoint valida un One-Time Token firmato via HMAC e restituisce
+ al frontend i dati della sessione NSU remota.
 
- Payload firmato (prodotto da create-link-one-time.ts v:2):
+ REGOLA ARCHITETTURALE
+ - I One-Time Token possono essere creati solo da un SUPERUSER autenticato.
+ - Ogni token contiene il su_name del SUPERUSER che lo ha creato.
+ - su_name è incluso nel payload firmato e quindi non può essere alterato
+   dal client senza invalidare la firma HMAC.
+ - ADMIN non è un creatore valido di One-Time Token.
+
+ PAYLOAD FIRMATO ATTESO
    - type: "NSU_ONE_TIME"
    - username: string
-   - ttl_h: number (1..24)
-   - invite_exp: number (ms epoch) — scadenza invito (ignorata se permanent)
-   - permanent?: boolean
+   - su_name: string
+   - ttl_h: number
+   - invite_exp: number
+   - permanent: false
    - client_email?: string
    - su_email?: string
-   - created_by?: "ADMIN" | "SU"   ← nuovo (v:2)
+   - created_by: "SU"
    - v?: number
 
- Risposta al frontend (letta da src/utils/oneTimeTokenManager.ts):
-   - user.username, first_login_at, expires_at (null se permanent),
-   - ttl_h, permanent, client_email, su_email,
-   - created_by, created_by_su (alias booleano/canale usato dal frontend
-     per la notifica email di attivazione OT).
+ RISPOSTA AL FRONTEND
+   - user.username
+   - su_name
+   - first_login_at
+   - expires_at
+   - ttl_h
+   - permanent
+   - client_email
+   - su_email
+   - created_by: "SU"
 
- ENV richieste su Vercel (Production):
-   - NSU_ONE_TIME_SECRET  (stessa usata dal create — già configurata)
+ TRACCIABILITÀ
+ Il campo su_name mantiene il legame:
+     One-Time Token -> NSU -> SUPERUSER
+
+ Questo legame potrà essere usato anche per:
+   - instradamento delle storie verso l'archivio del SU corretto;
+   - attribuzione dei consumi;
+   - futura contabilizzazione dei costi.
+
+ ENV RICHIESTA
+   - NSU_ONE_TIME_SECRET
 ==============================================================================
 */
 
-type CreatedByChannel = "ADMIN" | "SU";
+
 
 type ApiOk = {
   ok: true;
   user: { username: string; type: "NSU_ONE_TIME" };
   profileName: string;
+  su_name: string;
   first_login_at: string;
   expires_at: string | null;
   ttl_h: number;
   permanent: boolean;
   client_email?: string;
   su_email?: string;
-  created_by?: CreatedByChannel;
-  created_by_su?: boolean;
+  created_by: "SU";
 };
 
 type ApiErr = { ok: false; error: string };
@@ -110,12 +132,7 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function normalizeCreatedBy(value: unknown): CreatedByChannel | undefined {
-  if (typeof value !== "string") return undefined;
-  const v = value.trim().toUpperCase();
-  if (v === "ADMIN" || v === "SU") return v;
-  return undefined;
-}
+
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiOk | ApiErr>) {
   const corsOk = setCors(req, res);
@@ -175,11 +192,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   const permanent = payload?.permanent === true;
   const client_email = normalizeOptionalString(payload?.client_email);
   const su_email = normalizeOptionalString(payload?.su_email);
-  const created_by = normalizeCreatedBy(payload?.created_by);
+  const su_name =
+    typeof payload?.su_name === "string"
+    ? payload.su_name.trim().toLowerCase()
+    : "";
+
+  const created_by = payload?.created_by === "SU" ? "SU" : "";
 
   const now = Date.now();
 
-  if (payload?.type !== "NSU_ONE_TIME" || !username) {
+  if (
+  payload?.type !== "NSU_ONE_TIME" ||
+  !username ||
+  !su_name ||
+  created_by !== "SU"
+) {
     return res.status(400).json({ ok: false, error: "Token payload not valid" });
   }
 
@@ -197,6 +224,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     ok: true,
     user: { username, type: "NSU_ONE_TIME" },
     profileName: username,
+	su_name,
     first_login_at: first.toISOString(),
     expires_at: permanent ? null : expires.toISOString(),
     ttl_h,
@@ -204,6 +232,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     client_email,
     su_email,
     created_by,
-    created_by_su: created_by === "SU" ? true : created_by === "ADMIN" ? false : undefined,
+    created_by: "SU",
   });
 }

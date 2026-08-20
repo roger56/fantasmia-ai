@@ -1,5 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "crypto";
+import { Redis } from "@upstash/redis";
+const redis = Redis.fromEnv();
 
 /*
 ==============================================================================
@@ -17,6 +19,14 @@ import crypto from "crypto";
  - su_name è incluso nel payload firmato e quindi non può essere alterato
    dal client senza invalidare la firma HMAC.
  - ADMIN non è un creatore valido di One-Time Token.
+
+ DURATA
+ - Il default attuale della sessione è 5 ore.
+ - Il limite operativo attuale è 1-24 ore.
+ - L'invito deve essere attivato entro 12 ore dalla creazione.
+ - Dal primo accesso, la sessione dura per il TTL configurato
+   (es. 5 ore).
+ - La struttura è predisposta per future durate maggiori.
 
  PAYLOAD FIRMATO ATTESO
    - type: "NSU_ONE_TIME"
@@ -62,6 +72,7 @@ type ApiOk = {
   user: { username: string; type: "NSU_ONE_TIME" };
   profileName: string;
   su_name: string;
+  access_id: string;
   first_login_at: string;
   expires_at: string | null;
   ttl_h: number;
@@ -187,34 +198,71 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   const username = typeof payload?.username === "string" ? payload.username.trim() : "";
+  const access_id =
+    typeof payload?.access_id === "string"
+      ? payload.access_id.trim()
+      : "";
+
   const ttl_h_raw = typeof payload?.ttl_h === "number" ? payload.ttl_h : 5;
   const ttl_h = Math.max(1, Math.min(Math.floor(ttl_h_raw), 24));
   const inviteExp = typeof payload?.invite_exp === "number" ? payload.invite_exp : 0;
   const permanent = payload?.permanent === true;
   const client_email = normalizeOptionalString(payload?.client_email);
   const su_email = normalizeOptionalString(payload?.su_email);
+
   const su_name =
     typeof payload?.su_name === "string"
-    ? payload.su_name.trim().toLowerCase()
-    : "";
+      ? payload.su_name.trim().toLowerCase()
+      : "";
 
   const created_by = payload?.created_by === "SU" ? "SU" : "";
 
   const now = Date.now();
 
   if (
-  payload?.type !== "NSU_ONE_TIME" ||
-  !username ||
-  !su_name ||
-  created_by !== "SU"
-) {
-    return res.status(400).json({ ok: false, error: "Token payload not valid" });
+    payload?.type !== "NSU_ONE_TIME" ||
+    !username ||
+    !access_id ||
+    !su_name ||
+    created_by !== "SU"
+  ) {
+    return res.status(400).json({
+      ok: false,
+      error: "Token payload not valid",
+    });
+  }
+  const accessRecord = await redis.get<any>(`ot_access:${access_id}`);
+
+  if (!accessRecord) {
+    return res.status(401).json({
+      ok: false,
+      error: "Remote access not found",
+    });
   }
 
+  if (accessRecord.revoked === true) {
+    return res.status(403).json({
+      ok: false,
+      error: "Remote access revoked",
+    });
+  }
+
+  if (
+    accessRecord.su_name !== su_name ||
+    accessRecord.username !== username
+  ) {
+    return res.status(401).json({
+      ok: false,
+      error: "Remote access mismatch",
+    });
+  }
   // Scadenza invito solo per token non permanenti.
   if (!permanent) {
     if (!inviteExp || now > inviteExp) {
-      return res.status(410).json({ ok: false, error: "Invite expired" });
+      return res.status(410).json({
+        ok: false,
+        error: "Invite expired",
+      });
     }
   }
 
@@ -225,14 +273,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     ok: true,
     user: { username, type: "NSU_ONE_TIME" },
     profileName: username,
-	su_name,
+    su_name,
+    access_id,
     first_login_at: first.toISOString(),
     expires_at: permanent ? null : expires.toISOString(),
     ttl_h,
     permanent,
     client_email,
     su_email,
-    created_by,
     created_by: "SU",
   });
 }

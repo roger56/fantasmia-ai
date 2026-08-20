@@ -14,6 +14,14 @@
   - Il nome del SU (su_name) viene ricavato dal JWT verificato
     e NON viene accettato dal body della richiesta.
 
+ DURATA
+  - Il default attuale della sessione è 5 ore.
+  - Il limite operativo attuale è 1-24 ore.
+  - L'invito deve essere attivato entro 12 ore dalla creazione.
+  - Dal primo accesso, la sessione dura per il TTL configurato
+    (es. 5 ore).
+  - La struttura è predisposta per future durate maggiori.
+
   TRACCIABILITÀ
   Il payload One-Time firmato contiene anche:
     - su_name: identificativo del SUPERUSER creatore
@@ -46,11 +54,15 @@
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "crypto";
+import { Redis } from "@upstash/redis";
+
+const redis = Redis.fromEnv();
 
 type ApiOk = {
   ok: true;
   username: string;
   su_name: string;
+  access_id: string;
   ttl_h: number;
   invite_exp_at: string | null;
   token: string;
@@ -290,12 +302,27 @@ const permanent = false;
   const now = Date.now();
   const TEN_YEARS_MS = 10 * 365 * 24 * 60 * 60 * 1000;
   const invite_exp_ms = permanent ? now + TEN_YEARS_MS : now + 12 * 60 * 60 * 1000;
-
+  // Identificativo univoco dell'autorizzazione remota.
+  // Verrà usato per revocare l'OTL senza memorizzare il token completo.
+  const accessId = crypto.randomUUID();
+  // Registra l'autorizzazione remota su Redis.
+  // Il token completo NON viene salvato.
+  // Redis conserva solo i dati minimi necessari per controllo e revoca.
+  await redis.set(`ot_access:${accessId}`, {
+    access_id: accessId,
+    su_name: suName,
+    username,
+    revoked: false,
+    created_at: now,
+    invite_exp: invite_exp_ms,
+    ttl_h,
+  });
   const payload = {
     v: 2,
     type: "NSU_ONE_TIME",
     username,
-	su_name: suName,
+    access_id: accessId,
+    su_name: suName,
     ttl_h,
     iat: now,
     invite_exp: invite_exp_ms,
@@ -316,6 +343,7 @@ const permanent = false;
   return res.status(200).json({
     ok: true,
     username,
+    access_id: accessId,
     ttl_h,
     invite_exp_at: permanent ? null : new Date(invite_exp_ms).toISOString(),
     token,

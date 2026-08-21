@@ -256,8 +256,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       error: "Remote access mismatch",
     });
   }
-  // Scadenza invito solo per token non permanenti.
-  if (!permanent) {
+  // Se l'accesso non è ancora stato attivato, l'invito deve essere
+  // utilizzato entro la finestra prevista dalla creazione.
+  const hasExistingSession =
+    typeof accessRecord.first_login_at === "string" &&
+    typeof accessRecord.expires_at === "string";
+
+  if (!permanent && !hasExistingSession) {
     if (!inviteExp || now > inviteExp) {
       return res.status(410).json({
         ok: false,
@@ -266,8 +271,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
   }
 
-  const first = new Date(now);
-  const expires = new Date(now + ttl_h * 60 * 60 * 1000);
+  let firstLoginAt: string;
+  let expiresAt: string | null;
+
+  if (hasExistingSession) {
+    firstLoginAt = accessRecord.first_login_at;
+    expiresAt = accessRecord.expires_at;
+
+    if (!permanent && expiresAt) {
+      const expiresMs = new Date(expiresAt).getTime();
+
+      if (!Number.isFinite(expiresMs) || now >= expiresMs) {
+        return res.status(410).json({
+          ok: false,
+          error: "Remote session expired",
+        });
+      }
+    }
+  } else {
+    const first = new Date(now);
+    const expires = new Date(now + ttl_h * 60 * 60 * 1000);
+
+    firstLoginAt = first.toISOString();
+    expiresAt = permanent ? null : expires.toISOString();
+
+    await redis.set(`ot_access:${access_id}`, {
+      ...accessRecord,
+      first_login_at: firstLoginAt,
+      expires_at: expiresAt,
+      activated_at: now,
+      updated_at: now,
+    });
+  }
 
   return res.status(200).json({
     ok: true,
@@ -275,8 +310,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     profileName: username,
     su_name,
     access_id,
-    first_login_at: first.toISOString(),
-    expires_at: permanent ? null : expires.toISOString(),
+    first_login_at: firstLoginAt,
+    expires_at: expiresAt,
+    ttl_h,
+    permanent,
+    client_email,
+    su_email,
+    created_by: "SU",
+  });
+
+  return res.status(200).json({
+    ok: true,
+    user: { username, type: "NSU_ONE_TIME" },
+    profileName: username,
+    su_name,
+    access_id,
+    first_login_at: firstLoginAt,
+    expires_at: expiresAt,
     ttl_h,
     permanent,
     client_email,

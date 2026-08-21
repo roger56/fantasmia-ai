@@ -62,6 +62,13 @@ type ApiOk =
     }
   | {
       success: true;
+      su_name: string;
+      su_email: string;
+      su_cell: string;
+      hub_url?: string;
+    }
+  | {
+      success: true;
       items: any[];
     }
   | {
@@ -69,6 +76,7 @@ type ApiOk =
       su_name: string;
       nsu_id: string;
       display_name?: string;
+      su_email?: string;
       token: string;
       role: "NSU";
       hub_url?: string;

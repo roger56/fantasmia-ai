@@ -58,7 +58,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       })
     });
 
-    const data = await openaiRes.json();
+    const data: any = await openaiRes.json();
 
     if (openaiRes.status !== 200) {
       return res.status(openaiRes.status).json({ error: data.error || 'Image generation failed' });

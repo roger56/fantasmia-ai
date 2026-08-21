@@ -1067,7 +1067,7 @@ if (action === "create") {
         expires_at: expiresAt,
       };
       await saveGroup(groupState);
-      return res.json({ success: true, group_id: groupId, group_state: groupState,suggestion_in_flight_until: group.extras?.suggestion_in_flight_until ?? null,
+      return res.json({ success: true, group_id: groupId, group_state: groupState,suggestion_in_flight_until: groupState.extras?.suggestion_in_flight_until ?? null,
  });
 
     }

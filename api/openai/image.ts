@@ -7,13 +7,16 @@ const cors = Cors({
   origin: (origin, callback) => {
     // Permetti tutti i domini Lovable + domini personalizzati
     const allowedDomains = [
-  '.lovableproject.com',
-  '.lovable.app',
-  'fantasmia.it',
-  'localhost',
-  'fantasmia-web-',
-  'fantasmia-web.vercel.app',
-];
+      '.lovableproject.com',
+      '.lovable.app',
+      'fantasmia.it',
+      'www.fantasmia.it',
+      'fantas-ia.it',
+      'www.fantas-ia.it',
+      'localhost',
+      'fantasmia-web-',
+      'fantasmia-web.vercel.app',
+    ];
     
     if (!origin || allowedDomains.some(domain => origin.includes(domain))) {
       callback(null, true);

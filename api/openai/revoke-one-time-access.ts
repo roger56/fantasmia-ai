@@ -77,6 +77,7 @@ const allowedOrigins: Array<string | RegExp> = [
   /^https:\/\/.*\.lovable\.dev$/,
   "http://localhost:5173",
   "http://localhost:3000",
+  "http://localhost:8080",
 ];
 
 function isOriginAllowed(origin: string) {

@@ -1,9 +1,42 @@
+/**
+ * Endpoint serverless per generare una chiave temporanea Speechmatics
+ * destinata al riconoscimento vocale realtime dal browser.
+ *
+ * Il frontend non riceve mai la SPEECHMATICS_API_KEY permanente:
+ * questa funzione usa la chiave privata lato server per richiedere
+ * a Speechmatics una chiave temporanea con durata limitata.
+ *
+ * Funzioni principali:
+ * - gestione CORS per i domini autorizzati Fantasmia;
+ * - accettazione delle sole richieste POST/OPTIONS;
+ * - lettura di SPEECHMATICS_API_KEY e SPEECHMATICS_REGION;
+ * - richiesta di una temporary key Speechmatics realtime;
+ * - restituzione al frontend di:
+ *   - jwt temporaneo;
+ *   - URL WebSocket realtime;
+ *   - durata della chiave.
+ *
+ * Variabili ambiente richieste:
+ * - SPEECHMATICS_API_KEY
+ * - SPEECHMATICS_REGION (opzionale, default EU1)
+ *
+ * Endpoint:
+ *   POST /api/openai/sm/rt-token
+ */
 import Cors from "cors";
 import type { NextApiRequest, NextApiResponse } from "next";
 
 const cors = Cors({
   origin: (origin, callback) => {
-    const allowed = [".lovableproject.com", ".lovable.app", "fantasmia.it", "localhost","fantasmia-web-","fantasmia-web.vercel.app",];
+	const allowed = [
+	  ".lovableproject.com",
+	  ".lovable.app",
+	  "fantasmia.it",
+	  "fantas-ia.it",
+	  "localhost",
+	  "fantasmia-web-",
+	  "fantasmia-web.vercel.app",
+	];
     if (!origin || allowed.some((d) => origin.includes(d))) callback(null, true);
     else callback(new Error("Not allowed by CORS"));
   },

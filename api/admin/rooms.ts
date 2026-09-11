@@ -767,6 +767,32 @@ if (action === "create") {
     room_state: state,
   });
 }
+    if (action === "join") {
+      const room = normalizeKey(body.room);
+      if (!room) return res.status(400).json({ error: "room required" });
+
+      const state = await getRoom(room, true);
+      if (!state) return res.status(404).json({ error: "room not found or expired" });
+
+      const requestedWriterId = normalizeKey(body.writer_id);
+      const writerId = requestedWriterId || shortId("writer");
+      let writerIndex = state.writers.indexOf(writerId);
+
+      if (writerIndex < 0) {
+        state.writers.push(writerId);
+        writerIndex = state.writers.length - 1;
+        bump(state);
+        await saveRoom(room, state);
+      }
+
+      return res.json({
+        success: true,
+        writer_id: writerId,
+        writer_index: writerIndex,
+        room_state: state,
+      });
+    }
+
     if (action === "list_rooms") {
       if (!isAdmin) return res.status(401).json({ error: "admin only" });
       const ids = (await redis.smembers<string[]>(KEY_ROOMS_SET)) || [];

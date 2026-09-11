@@ -805,6 +805,78 @@ if (action === "create") {
       return res.json({ success: true, rooms, now: now() });
     }
 
+    // Compatibilità frontend stanza singola: comando unificato start/next, pausa, ripresa e stop.
+    if (action === "turn") {
+      if (!isAdmin) return res.status(401).json({ error: "admin only" });
+
+      const room = normalizeKey(body.room);
+      if (!room) return res.status(400).json({ error: "missing room" });
+
+      const state = await getRoom(room);
+      if (!state) return res.status(404).json({ error: "room not found" });
+
+      if (body.turnActive === false) {
+        state.turn_paused = false;
+        state.turn_remaining_ms = null;
+        state.turn_ends_at = null;
+        bump(state);
+        await saveRoom(room, state);
+        return res.json({ success: true, room_state: state });
+      }
+
+      if (body.turnPaused === true) {
+        if (state.turn_paused) return res.status(409).json({ error: "already paused" });
+        if (state.turn_ends_at == null) return res.status(409).json({ error: "no active turn" });
+
+        state.turn_remaining_ms = Math.max(0, state.turn_ends_at - now());
+        state.turn_paused = true;
+        state.turn_ends_at = null;
+        bump(state);
+        await saveRoom(room, state);
+        return res.json({ success: true, room_state: state });
+      }
+
+      if (body.turnPaused === false) {
+        if (!state.turn_paused || state.turn_remaining_ms == null) {
+          return res.status(409).json({ error: "not paused" });
+        }
+
+        const remaining = Math.max(0, Number(state.turn_remaining_ms) || 0);
+        if (remaining <= 0) return res.status(409).json({ error: "no remaining time" });
+
+        state.turn_paused = false;
+        state.turn_remaining_ms = null;
+        state.turn_ends_at = now() + remaining;
+        bump(state);
+        await saveRoom(room, state);
+        return res.json({ success: true, room_state: state });
+      }
+
+      if (body.turnActive === true) {
+        if (!state.writers.length) return res.status(409).json({ error: "no writers yet" });
+
+        const requestedEnd = Number(body.turnEndsAt);
+        const turnSeconds = clampNumber(body.turn_s, 180, 15, 600);
+
+        // Il pulsante del frontend è "Prossimo": con più autori passa al successivo.
+        // Con un solo autore l'indice rimane invariato.
+        state.current_writer_index =
+          (state.current_writer_index + 1) % state.writers.length;
+        state.turn_paused = false;
+        state.turn_remaining_ms = null;
+        state.turn_ends_at =
+          Number.isFinite(requestedEnd) && requestedEnd > now()
+            ? requestedEnd
+            : now() + turnSeconds * 1000;
+
+        bump(state);
+        await saveRoom(room, state);
+        return res.json({ success: true, room_state: state });
+      }
+
+      return res.status(400).json({ error: "invalid turn command" });
+    }
+
     if (action === "next_turn") {
       if (!isAdmin) return res.status(401).json({ error: "admin only" });
       const room = normalizeKey(body.room);

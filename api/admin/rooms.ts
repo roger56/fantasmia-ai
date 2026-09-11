@@ -54,7 +54,11 @@ const allowedOrigins: Array<string | RegExp> = [
   "https://www.fantas-ia.it",
   "https://fantasmia-web.vercel.app",
 
-  // Preview Vercel del frontend Fantasmia
+  // Deployment Vercel del frontend Fantasmia
+  "https://fantasmia-5tcgfmiwp-rogers-projects-68a7bd87.vercel.app",
+  /^https:\/\/fantasmia-[a-z0-9-]+-rogers-projects-68a7bd87\.vercel\.app$/,
+
+  // Preview Vercel storiche del frontend Fantasmia
   /^https:\/\/fantasmia-web-.*\.vercel\.app$/,
 
   /^https:\/\/.*\.lovableproject\.com$/,

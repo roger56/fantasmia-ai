@@ -120,6 +120,8 @@ const allowedOrigins: Array<string | RegExp> = [
   "https://fantas-ia.it",
   "https://www.fantas-ia.it",
   "https://fantasmia-web.vercel.app",
+  "https://fantasmia.it",
+  "https://www.fantasmia.it",
 
   // Preview Vercel del frontend Fantasmia
   /^https:\/\/fantasmia-web-.*\.vercel\.app$/,

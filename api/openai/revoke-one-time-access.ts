@@ -67,6 +67,8 @@ const allowedOrigins: Array<string | RegExp> = [
   "https://fantas-ia.it",
   "https://www.fantas-ia.it",
   "https://fantasmia-web.vercel.app",
+  "https://fantasmia.it",
+  "https://www.fantasmia.it",
   /^https:\/\/fantasmia-web-.*\.vercel\.app$/,
   /^https:\/\/fantasmia-[a-z0-9-]+-rogers-projects-68a7bd87\.vercel\.app$/,
   /^https:\/\/.*\.lovableproject\.com$/,

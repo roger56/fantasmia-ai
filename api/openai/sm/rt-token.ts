@@ -36,6 +36,8 @@ const cors = Cors({
 	  "localhost",
 	  "fantasmia-web-",
 	  "fantasmia-web.vercel.app",
+        "fantasmia.it",
+        "www.fantasmia.it",
 	  "fantasmia-5tcgfmiwp-rogers-projects-68a7bd87.vercel.app",
 	];
     if (!origin || allowed.some((d) => origin.includes(d))) callback(null, true);

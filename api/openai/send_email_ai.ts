@@ -52,8 +52,7 @@ export async function POST(request: Request) {
     const emailContent = `
 ${html}
 <div style="color:#666;font-size:12px;margin-top:20px;padding-top:20px;border-top:1px solid #eee">
-  <p><em>Creato con Intelligenza Artificiale – Non rispondere a questa email</em></p>
-  <p>Album generato automaticamente per la stampa (A4 / A5)</p>
+  <p><em>Messaggio generato automaticamente da Fantasmia – Non rispondere a questa email.</em></p>
 </div>
 `;
 

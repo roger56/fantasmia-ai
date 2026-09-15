@@ -53,6 +53,8 @@ const allowedOrigins: Array<string | RegExp> = [
   "https://fantas-ia.it",
   "https://www.fantas-ia.it",
   "https://fantasmia-web.vercel.app",
+  "https://fantasmia.it",
+  "https://www.fantasmia.it",
 
   // Deployment Vercel del frontend Fantasmia
   "https://fantasmia-5tcgfmiwp-rogers-projects-68a7bd87.vercel.app",

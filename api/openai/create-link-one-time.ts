@@ -35,9 +35,10 @@
     - attribuzione di utilizzi/consumi al SUPERUSER corretto;
     - futura contabilizzazione dei costi associati ai token e ai servizi AI.
 
-  LINK PERMANENTI
-  I One-Time Token creati dai SUPERUSER non possono essere permanenti.
-  Una richiesta con permanent=true viene rifiutata con HTTP 403.
+  ACCESSI PERMANENTI
+  - Un SUPERUSER può creare un accesso permanente per un NSU remoto in abbonamento.
+  - L'accesso resta valido finché non viene revocato dal SUPERUSER.
+  - Gli OTL temporanei continuano a usare il TTL e la finestra di attivazione.
 
   ENV VARS RICHIESTE
     - ADMIN_JWT_SECRET
@@ -286,17 +287,9 @@ if (!suAuth.ok) {
   const ttlRaw = typeof body.ttl_h === "number" ? body.ttl_h : 5;
   const ttl_h = Math.max(1, Math.min(Math.floor(ttlRaw), 24));
 
-  // ⛔ SU non può creare link permanenti
-  const requestedPermanent = body.permanent === true;
-
-if (requestedPermanent) {
-  return res.status(403).json({
-    ok: false,
-    error: "Il Superuser non può creare link permanenti",
-  });
-}
-
-const permanent = false;
+  // permanent=true identifica un NSU remoto in abbonamento.
+  // Il record Redis permette al SUPERUSER di sospenderlo o revocarlo.
+  const permanent = body.permanent === true;
 
   const client_email = normalizeOptionalString(body.client_email);
   const su_email = normalizeOptionalString(body.su_email);

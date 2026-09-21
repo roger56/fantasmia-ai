@@ -98,7 +98,7 @@ type Body =
   }
   | { action: "su_login"; su_name?: string; su_password?: string }
   | { action: "su_profile" }
-  | { action: "nsu_create"; nsu_id?: string; nsu_pin?: string; display_name?: string; hub_url?: string }
+  | { action: "nsu_create"; nsu_id?: string; nsu_pin?: string; display_name?: string; hub_url?: string; authorization_hours?: number }
   | { action: "nsu_list" }
   | { action: "nsu_disable"; nsu_id?: string; enabled?: boolean }
   | { action: "nsu_reset_pin"; nsu_id?: string; nsu_pin?: string }
@@ -611,6 +611,10 @@ export default async function handler(
     const nsuId = normalizeNsuId(body.nsu_id);
     const pin = normalizePin4(body.nsu_pin);
     const displayName = String(body.display_name || "").trim().slice(0, 60);
+    const authorizationHoursRaw = Number(body.authorization_hours ?? 12);
+    const authorizationHours = Number.isFinite(authorizationHoursRaw)
+      ? Math.max(1, Math.min(24, Math.floor(authorizationHoursRaw)))
+      : 12;
 
     if (!nsuId) {
       return res.status(400).json({ error: "missing/invalid nsu_id" });
@@ -644,6 +648,10 @@ export default async function handler(
         ? existingNsu.first_login_pending === true
         : true,
       write_authorized_until: existingNsu?.write_authorized_until || null,
+      initial_authorization_hours:
+        existingNsu?.first_login_pending === false
+          ? (existingNsu.initial_authorization_hours || authorizationHours)
+          : authorizationHours,
       ...passwordRecord,
       created_at: existingNsu?.created_at || now,
       updated_at: now,
@@ -693,6 +701,7 @@ export default async function handler(
         created_at: rec.created_at || null,
         first_login_pending: rec.first_login_pending === true,
         write_authorized_until: rec.write_authorized_until || null,
+        initial_authorization_hours: rec.initial_authorization_hours || 12,
       });
     }
 
@@ -844,8 +853,11 @@ export default async function handler(
     const exp = nowSec + 60 * 60;
 
     const firstLoginAuthorization = stored.first_login_pending === true;
+    const initialAuthorizationHours = Number.isFinite(Number(stored.initial_authorization_hours))
+      ? Math.max(1, Math.min(24, Math.floor(Number(stored.initial_authorization_hours))))
+      : 12;
     const writeAuthorizedUntil = firstLoginAuthorization
-      ? new Date(now + 12 * 60 * 60 * 1000).toISOString()
+      ? new Date(now + initialAuthorizationHours * 60 * 60 * 1000).toISOString()
       : (typeof stored.write_authorized_until === "string"
           ? stored.write_authorized_until
           : null);

@@ -265,7 +265,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   // utilizzato entro la finestra prevista dalla creazione.
   const hasExistingSession =
     typeof accessRecord.first_login_at === "string" &&
-    typeof accessRecord.expires_at === "string";
+    (permanent || typeof accessRecord.expires_at === "string");
 
   if (!permanent && !hasExistingSession) {
     if (!inviteExp || now > inviteExp) {
@@ -308,21 +308,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       updated_at: now,
     });
   }
-
-  return res.status(200).json({
-    ok: true,
-    user: { username, type: "NSU_ONE_TIME" },
-    profileName: username,
-    su_name,
-    access_id,
-    first_login_at: firstLoginAt,
-    expires_at: expiresAt,
-    ttl_h,
-    permanent,
-    client_email,
-    su_email,
-    created_by: "SU",
-  });
 
   return res.status(200).json({
     ok: true,

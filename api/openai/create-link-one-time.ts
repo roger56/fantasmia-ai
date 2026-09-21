@@ -312,7 +312,14 @@ if (!suAuth.ok) {
     created_at: now,
     invite_exp: invite_exp_ms,
     ttl_h,
+    permanent,
+    label,
+    client_email,
+    su_email,
   });
+  // Indice per rendere gli accessi remoti visibili al medesimo SU
+  // da qualunque browser. Il record completo resta in ot_access:{id}.
+  await redis.sadd(`auth:remote_list:${suName}`, accessId);
   const payload = {
     v: 2,
     type: "NSU_ONE_TIME",

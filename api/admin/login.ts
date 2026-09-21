@@ -77,6 +77,8 @@ type ApiOk =
       nsu_id: string;
       display_name?: string;
       su_email?: string;
+      write_authorized_until?: string | null;
+      first_login_authorization?: boolean;
       token: string;
       role: "NSU";
       hub_url?: string;
@@ -624,14 +626,26 @@ export default async function handler(
 
     const passwordRecord = hashPasswordPBKDF2(pin);
     const now = Date.now();
+    const existingNsu = await redis.get<any>(KEY_NSU(suName, nsuId));
 
     await redis.set(KEY_NSU(suName, nsuId), {
+      // Mantiene tutti i metadati e collegamenti già presenti.
+      // In particolare, un reset/aggiornamento non deve riattivare
+      // l'autorizzazione iniziale né perdere dati associativi.
+      ...(existingNsu || {}),
       su_name: suName,
       nsu_id: nsuId,
       display_name: displayName || nsuId,
       enabled: 1,
+      // Il primo accesso con credenziali attiva automaticamente 12 ore
+      // di scrittura. I successivi accessi restano in sola lettura,
+      // salvo una nuova autorizzazione del Punto Fantasmia.
+      first_login_pending: existingNsu
+        ? existingNsu.first_login_pending === true
+        : true,
+      write_authorized_until: existingNsu?.write_authorized_until || null,
       ...passwordRecord,
-      created_at: now,
+      created_at: existingNsu?.created_at || now,
       updated_at: now,
       ...(hubUrl ? { hub_url: hubUrl } : {}),
     });
@@ -677,6 +691,8 @@ export default async function handler(
         enabled: rec.enabled === 1 || rec.enabled === "1" || rec.enabled === true,
         updated_at: rec.updated_at || null,
         created_at: rec.created_at || null,
+        first_login_pending: rec.first_login_pending === true,
+        write_authorized_until: rec.write_authorized_until || null,
       });
     }
 
@@ -823,8 +839,16 @@ export default async function handler(
       return res.status(500).json({ error: "Missing ADMIN_JWT_SECRET" });
     }
 
-    const nowSec = Math.floor(Date.now() / 1000);
+    const now = Date.now();
+    const nowSec = Math.floor(now / 1000);
     const exp = nowSec + 60 * 60;
+
+    const firstLoginAuthorization = stored.first_login_pending === true;
+    const writeAuthorizedUntil = firstLoginAuthorization
+      ? new Date(now + 12 * 60 * 60 * 1000).toISOString()
+      : (typeof stored.write_authorized_until === "string"
+          ? stored.write_authorized_until
+          : null);
 
     const token = signJwt(
       {
@@ -850,7 +874,10 @@ export default async function handler(
 
     await redis.set(key, {
       ...stored,
-      last_login: Date.now(),
+      first_login_pending: false,
+      write_authorized_until: writeAuthorizedUntil,
+      last_login: now,
+      updated_at: now,
     });
 
     const hubUrl = resolveHubUrl(stored);
@@ -861,6 +888,8 @@ export default async function handler(
       nsu_id: nsuId,
       display_name: stored.display_name,
 	  su_email: suStored?.su_email || "",
+      write_authorized_until: writeAuthorizedUntil,
+      first_login_authorization: firstLoginAuthorization,
       token,
       role: "NSU",
       ...(hubUrl ? { hub_url: hubUrl } : {}),

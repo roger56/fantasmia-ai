@@ -217,6 +217,8 @@ const redis = Redis.fromEnv();
 const KEY_SU = (suName: string) => `auth:su:${suName}`;
 const KEY_NSU = (suName: string, nsuId: string) => `auth:nsu:${suName}:${nsuId}`;
 const KEY_NSU_LIST = (suName: string) => `auth:nsu_list:${suName}`;
+const KEY_REMOTE_LIST = (suName: string) => `auth:remote_list:${suName}`;
+const KEY_REMOTE_ACCESS = (accessId: string) => `ot_access:${accessId}`;
 
 /*
   ==================================================
@@ -661,6 +663,100 @@ export default async function handler(
     await redis.sadd(KEY_NSU_LIST(suName), nsuId);
 
     return res.status(200).json({ success: true, token: "", role: "SUPERUSER" });
+  }
+
+  /*
+    ==================================================
+    ACTION: nsu_register_remote
+    Indicizza in modo non distruttivo un accesso remoto già esistente.
+    Serve a migrare i remoti creati prima dell'anagrafica centrale.
+    ==================================================
+  */
+  if (body?.action === "nsu_register_remote") {
+    const suAuth = verifySuBearer(req);
+
+    if (!suAuth.ok || !suAuth.su_name) {
+      return res.status(401).json({ error: "superuser only" });
+    }
+
+    const accessId = String(body.access_id || "").trim();
+    if (!accessId) {
+      return res.status(400).json({ error: "missing access_id" });
+    }
+
+    const key = KEY_REMOTE_ACCESS(accessId);
+    const stored = await redis.get<any>(key);
+    if (!stored) {
+      return res.status(404).json({ error: "remote access not found" });
+    }
+    if (normalizeSuName(stored.su_name) !== suAuth.su_name) {
+      return res.status(403).json({ error: "remote access belongs to another SU" });
+    }
+
+    await redis.set(key, {
+      ...stored,
+      username: stored.username || String(body.username || "").trim(),
+      permanent: stored.permanent === true || body.permanent === true,
+      client_email: stored.client_email || String(body.client_email || "").trim() || undefined,
+      updated_at: Date.now(),
+    });
+    await redis.sadd(KEY_REMOTE_LIST(suAuth.su_name), accessId);
+
+    return res.status(200).json({ success: true, token: "", role: "SUPERUSER" });
+  }
+
+  /*
+    ==================================================
+    ACTION: nsu_list_all
+    Anagrafica centrale del SU: credenziali NSU + accessi remoti/OTL.
+    ==================================================
+  */
+  if (body?.action === "nsu_list_all") {
+    const suAuth = verifySuBearer(req);
+
+    if (!suAuth.ok || !suAuth.su_name) {
+      return res.status(401).json({ error: "superuser only" });
+    }
+
+    const suName = suAuth.su_name;
+    const credentialIds = (await redis.smembers<string[]>(KEY_NSU_LIST(suName))) || [];
+    const remoteIds = (await redis.smembers<string[]>(KEY_REMOTE_LIST(suName))) || [];
+    const items: any[] = [];
+
+    for (const id of credentialIds) {
+      const rec = await redis.get<any>(KEY_NSU(suName, id));
+      if (!rec) continue;
+      items.push({
+        kind: "credentials",
+        nsu_id: rec.nsu_id || id,
+        display_name: rec.display_name || id,
+        enabled: rec.enabled === 1 || rec.enabled === "1" || rec.enabled === true,
+        created_at: rec.created_at || null,
+        updated_at: rec.updated_at || null,
+        write_authorized_until: rec.write_authorized_until || null,
+        initial_authorization_hours: rec.initial_authorization_hours || 12,
+      });
+    }
+
+    for (const accessId of remoteIds) {
+      const rec = await redis.get<any>(KEY_REMOTE_ACCESS(accessId));
+      if (!rec || normalizeSuName(rec.su_name) !== suName) continue;
+      items.push({
+        kind: rec.permanent === true ? "remote" : "otl",
+        access_id: accessId,
+        nsu_id: rec.username || accessId,
+        display_name: rec.username || "NSU remoto",
+        enabled: rec.revoked !== true,
+        permanent: rec.permanent === true,
+        client_email: rec.client_email || "",
+        created_at: rec.created_at || null,
+        first_login_at: rec.first_login_at || null,
+        expires_at: rec.expires_at || null,
+      });
+    }
+
+    items.sort((a, b) => Number(b.created_at || 0) - Number(a.created_at || 0));
+    return res.status(200).json({ success: true, items });
   }
 
   /*

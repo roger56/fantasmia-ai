@@ -693,13 +693,8 @@ export default async function handler(
       return res.status(403).json({ error: "remote access belongs to another SU" });
     }
 
-    await redis.set(key, {
-      ...stored,
-      username: stored.username || String(body.username || "").trim(),
-      permanent: stored.permanent === true || body.permanent === true,
-      client_email: stored.client_email || String(body.client_email || "").trim() || undefined,
-      updated_at: Date.now(),
-    });
+    // Non modifica tipo, durata o revoca dell'accesso: aggiunge soltanto
+    // all'indice un record già verificato come appartenente a questo SU.
     await redis.sadd(KEY_REMOTE_LIST(suAuth.su_name), accessId);
 
     return res.status(200).json({ success: true, token: "", role: "SUPERUSER" });

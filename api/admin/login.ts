@@ -561,7 +561,10 @@ export default async function handler(
     }
 
     const nowSec = Math.floor(Date.now() / 1000);
-    const exp = nowSec + 60 * 60;
+    // Allinea il JWT server alla sessione SU dell'interfaccia (24 ore).
+    // Prima il pannello restava aperto mentre il JWT scadeva dopo un'ora,
+    // causando errori apparentemente inspiegabili su reset PIN e gestione NSU.
+    const exp = nowSec + 24 * 60 * 60;
 
     const token = signJwt(
       {
@@ -580,7 +583,7 @@ export default async function handler(
         secure: isProd,
         sameSite: "none",
         path: "/",
-        maxAge: 60 * 60,
+        maxAge: 24 * 60 * 60,
       })
     );
 

@@ -98,11 +98,13 @@ type Body =
   }
   | { action: "su_login"; su_name?: string; su_password?: string }
   | { action: "su_profile" }
-  | { action: "nsu_create"; nsu_id?: string; nsu_pin?: string; display_name?: string; hub_url?: string; authorization_hours?: number }
+  | { action: "nsu_create"; nsu_id?: string; nsu_pin?: string; display_name?: string; hub_url?: string; authorization_hours?: number; access_type?: "local" | "remote" }
   | { action: "nsu_list" }
   | { action: "nsu_disable"; nsu_id?: string; enabled?: boolean }
   | { action: "nsu_reset_pin"; nsu_id?: string; nsu_pin?: string }
-  | { action: "nsu_login"; su_name?: string; nsu_id?: string; nsu_pin?: string };
+  | { action: "nsu_reset_browsers"; nsu_id?: string }
+  | { action: "nsu_login"; su_name?: string; nsu_id?: string; nsu_pin?: string; browser_id?: string; session_id?: string }
+  | { action: "nsu_validate_session" };
 
 /*
   ==================================================
@@ -242,6 +244,15 @@ function normalizeNsuId(value: any): string {
 function normalizePin4(value: any): string {
   const pin = String(value || "").trim();
   return /^\d{4}$/.test(pin) ? pin : "";
+}
+
+function normalizeOpaqueId(value: any): string {
+  const id = String(value || "").trim();
+  return id.length >= 8 && id.length <= 200 ? id : "";
+}
+
+function hashOpaqueId(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
 }
 
 /*
@@ -393,6 +404,47 @@ function verifySuBearer(req: NextApiRequest): { ok: boolean; su_name?: string } 
   }
 
   return { ok: true, su_name: suName };
+}
+
+function verifyNsuBearer(req: NextApiRequest): {
+  ok: boolean;
+  su_name?: string;
+  nsu_id?: string;
+  access_type?: "local" | "remote";
+  session_hash?: string;
+} {
+  const auth = String(req.headers.authorization || "").trim();
+  if (!auth.startsWith("Bearer ")) return { ok: false };
+
+  const token = auth.slice(7);
+  const [header, payloadEncoded, signature] = token.split(".");
+  const secret = process.env.ADMIN_JWT_SECRET;
+  if (!header || !payloadEncoded || !signature || !secret) return { ok: false };
+
+  const expectedSignature = crypto
+    .createHmac("sha256", secret)
+    .update(`${header}.${payloadEncoded}`)
+    .digest("base64url");
+  if (expectedSignature !== signature) return { ok: false };
+
+  try {
+    const payload = JSON.parse(Buffer.from(payloadEncoded, "base64url").toString());
+    if (payload.role !== "NSU" || typeof payload.exp !== "number" || payload.exp * 1000 < Date.now()) {
+      return { ok: false };
+    }
+    const suName = normalizeSuName(payload.su_name);
+    const nsuId = normalizeNsuId(payload.nsu_id);
+    if (!suName || !nsuId) return { ok: false };
+    return {
+      ok: true,
+      su_name: suName,
+      nsu_id: nsuId,
+      access_type: payload.access_type === "remote" ? "remote" : "local",
+      session_hash: typeof payload.session_hash === "string" ? payload.session_hash : undefined,
+    };
+  } catch {
+    return { ok: false };
+  }
 }
 
 /*
@@ -616,6 +668,7 @@ export default async function handler(
     const nsuId = normalizeNsuId(body.nsu_id);
     const pin = normalizePin4(body.nsu_pin);
     const displayName = String(body.display_name || "").trim().slice(0, 60);
+    const accessType = body.access_type === "remote" ? "remote" : "local";
     const authorizationHoursRaw = Number(body.authorization_hours ?? 12);
     const authorizationHours = Number.isFinite(authorizationHoursRaw)
       ? Math.max(1, Math.min(24, Math.floor(authorizationHoursRaw)))
@@ -646,13 +699,21 @@ export default async function handler(
       nsu_id: nsuId,
       display_name: displayName || nsuId,
       enabled: 1,
-      // Il primo accesso con credenziali attiva automaticamente 12 ore
+      access_type: accessType,
+      // Il primo accesso locale con credenziali attiva automaticamente 12 ore
       // di scrittura. I successivi accessi restano in sola lettura,
       // salvo una nuova autorizzazione del Punto Fantasmia.
-      first_login_pending: existingNsu
-        ? existingNsu.first_login_pending === true
-        : true,
-      write_authorized_until: existingNsu?.write_authorized_until || null,
+      first_login_pending: accessType === "remote"
+        ? false
+        : (existingNsu ? existingNsu.first_login_pending === true : true),
+      write_authorized_until: accessType === "remote"
+        ? null
+        : (existingNsu?.write_authorized_until || null),
+      authorized_browser_hashes: accessType === "remote"
+        ? (Array.isArray(existingNsu?.authorized_browser_hashes) ? existingNsu.authorized_browser_hashes.slice(0, 2) : [])
+        : [],
+      active_session_hash: accessType === "remote" ? (existingNsu?.active_session_hash || null) : null,
+      active_browser_hash: accessType === "remote" ? (existingNsu?.active_browser_hash || null) : null,
       initial_authorization_hours:
         existingNsu?.first_login_pending === false
           ? (existingNsu.initial_authorization_hours || authorizationHours)
@@ -733,6 +794,11 @@ export default async function handler(
         updated_at: rec.updated_at || null,
         write_authorized_until: rec.write_authorized_until || null,
         initial_authorization_hours: rec.initial_authorization_hours || 12,
+        access_type: rec.access_type === "remote" ? "remote" : "local",
+        authorized_browser_count: Array.isArray(rec.authorized_browser_hashes)
+          ? rec.authorized_browser_hashes.length
+          : 0,
+        max_browsers: rec.access_type === "remote" ? 2 : undefined,
       });
     }
 
@@ -796,6 +862,11 @@ export default async function handler(
         first_login_pending: rec.first_login_pending === true,
         write_authorized_until: rec.write_authorized_until || null,
         initial_authorization_hours: rec.initial_authorization_hours || 12,
+        access_type: rec.access_type === "remote" ? "remote" : "local",
+        authorized_browser_count: Array.isArray(rec.authorized_browser_hashes)
+          ? rec.authorized_browser_hashes.length
+          : 0,
+        max_browsers: rec.access_type === "remote" ? 2 : undefined,
       });
     }
 
@@ -843,6 +914,9 @@ export default async function handler(
     await redis.set(key, {
       ...stored,
       enabled: body.enabled === true ? 1 : 0,
+      ...(body.enabled === true
+        ? {}
+        : { active_session_hash: null, active_browser_hash: null }),
       updated_at: Date.now(),
     });
 
@@ -886,10 +960,73 @@ export default async function handler(
     await redis.set(key, {
       ...stored,
       ...passwordRecord,
+      active_session_hash: null,
+      active_browser_hash: null,
       updated_at: Date.now(),
     });
 
     return res.status(200).json({ success: true, token: "", role: "SUPERUSER" });
+  }
+
+  /*
+    ==================================================
+    ACTION: nsu_reset_browsers
+    Solo SUPERUSER. Libera i due dispositivi autorizzati e termina la sessione remota.
+    ==================================================
+  */
+  if (body?.action === "nsu_reset_browsers") {
+    const suAuth = verifySuBearer(req);
+    if (!suAuth.ok || !suAuth.su_name) return res.status(401).json({ error: "superuser only" });
+
+    const nsuId = normalizeNsuId(body.nsu_id);
+    if (!nsuId) return res.status(400).json({ error: "missing/invalid nsu_id" });
+
+    const key = KEY_NSU(suAuth.su_name, nsuId);
+    const stored = await redis.get<any>(key);
+    if (!stored) return res.status(404).json({ error: "nsu not found" });
+    if (stored.access_type !== "remote") {
+      return res.status(400).json({ error: "browser reset is available only for remote NSU" });
+    }
+
+    await redis.set(key, {
+      ...stored,
+      authorized_browser_hashes: [],
+      active_session_hash: null,
+      active_browser_hash: null,
+      updated_at: Date.now(),
+    });
+    return res.status(200).json({ success: true, token: "", role: "SUPERUSER" });
+  }
+
+  /*
+    ==================================================
+    ACTION: nsu_validate_session
+    Controllo su evento, senza polling: una sola sessione remota può scrivere.
+    ==================================================
+  */
+  if (body?.action === "nsu_validate_session") {
+    const nsuAuth = verifyNsuBearer(req);
+    if (!nsuAuth.ok || !nsuAuth.su_name || !nsuAuth.nsu_id) {
+      return res.status(401).json({ error: "invalid or expired NSU session" });
+    }
+
+    const stored = await redis.get<any>(KEY_NSU(nsuAuth.su_name, nsuAuth.nsu_id));
+    const enabled = stored?.enabled === 1 || stored?.enabled === "1" || stored?.enabled === true;
+    if (!stored || !enabled) return res.status(403).json({ error: "NSU disabled or not found" });
+
+    const accessType = stored.access_type === "remote" ? "remote" : "local";
+    const active = accessType !== "remote"
+      || (typeof nsuAuth.session_hash === "string" && nsuAuth.session_hash === stored.active_session_hash);
+
+    return res.status(200).json({
+      success: true,
+      active,
+      access_type: accessType,
+      authorized_browser_count: Array.isArray(stored.authorized_browser_hashes)
+        ? stored.authorized_browser_hashes.length
+        : 0,
+      max_browsers: accessType === "remote" ? 2 : undefined,
+    } as any);
   }
 
   /*
@@ -902,6 +1039,8 @@ export default async function handler(
     const suName = normalizeSuName(body.su_name);
     const nsuId = normalizeNsuId(body.nsu_id);
     const pin = normalizePin4(body.nsu_pin);
+    const browserId = normalizeOpaqueId(body.browser_id);
+    const sessionId = normalizeOpaqueId(body.session_id);
 
     if (!suName) {
       return res.status(400).json({ error: "missing su_name" });
@@ -945,8 +1084,31 @@ export default async function handler(
     const now = Date.now();
     const nowSec = Math.floor(now / 1000);
     const exp = nowSec + 60 * 60;
+    const accessType = stored.access_type === "remote" ? "remote" : "local";
 
-    const firstLoginAuthorization = stored.first_login_pending === true;
+    let authorizedBrowserHashes: string[] = Array.isArray(stored.authorized_browser_hashes)
+      ? stored.authorized_browser_hashes.filter((value: unknown) => typeof value === "string").slice(0, 2)
+      : [];
+    let browserHash: string | null = null;
+    let sessionHash: string | null = null;
+
+    if (accessType === "remote") {
+      if (!browserId || !sessionId) {
+        return res.status(400).json({ error: "browser_id and session_id are required for remote NSU" });
+      }
+      browserHash = hashOpaqueId(browserId);
+      sessionHash = hashOpaqueId(sessionId);
+      if (!authorizedBrowserHashes.includes(browserHash)) {
+        if (authorizedBrowserHashes.length >= 2) {
+          return res.status(409).json({
+            error: "Limite di due browser raggiunto. Chiedi al Punto Fantasmia di azzerare i browser autorizzati.",
+          });
+        }
+        authorizedBrowserHashes = [...authorizedBrowserHashes, browserHash];
+      }
+    }
+
+    const firstLoginAuthorization = accessType === "local" && stored.first_login_pending === true;
     const initialAuthorizationHours = Number.isFinite(Number(stored.initial_authorization_hours))
       ? Math.max(1, Math.min(24, Math.floor(Number(stored.initial_authorization_hours))))
       : 12;
@@ -961,6 +1123,8 @@ export default async function handler(
         role: "NSU",
         su_name: suName,
         nsu_id: nsuId,
+        access_type: accessType,
+        ...(sessionHash ? { session_hash: sessionHash } : {}),
         iat: nowSec,
         exp,
       },
@@ -981,7 +1145,10 @@ export default async function handler(
     await redis.set(key, {
       ...stored,
       first_login_pending: false,
-      write_authorized_until: writeAuthorizedUntil,
+      write_authorized_until: accessType === "remote" ? null : writeAuthorizedUntil,
+      authorized_browser_hashes: accessType === "remote" ? authorizedBrowserHashes : [],
+      active_session_hash: accessType === "remote" ? sessionHash : null,
+      active_browser_hash: accessType === "remote" ? browserHash : null,
       last_login: now,
       updated_at: now,
     });
@@ -994,8 +1161,12 @@ export default async function handler(
       nsu_id: nsuId,
       display_name: stored.display_name,
 	  su_email: suStored?.su_email || "",
-      write_authorized_until: writeAuthorizedUntil,
+      write_authorized_until: accessType === "remote" ? null : writeAuthorizedUntil,
       first_login_authorization: firstLoginAuthorization,
+      access_type: accessType,
+      permanent_remote: accessType === "remote",
+      authorized_browser_count: accessType === "remote" ? authorizedBrowserHashes.length : 0,
+      max_browsers: accessType === "remote" ? 2 : undefined,
       token,
       role: "NSU",
       ...(hubUrl ? { hub_url: hubUrl } : {}),

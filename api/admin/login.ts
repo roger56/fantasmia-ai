@@ -79,6 +79,10 @@ type ApiOk =
       su_email?: string;
       write_authorized_until?: string | null;
       first_login_authorization?: boolean;
+      access_type?: "local" | "remote";
+      permanent_remote?: boolean;
+      authorized_browser_count?: number;
+      max_browsers?: number;
       token: string;
       role: "NSU";
       hub_url?: string;
@@ -1083,8 +1087,8 @@ export default async function handler(
 
     const now = Date.now();
     const nowSec = Math.floor(now / 1000);
-    const exp = nowSec + 60 * 60;
     const accessType = stored.access_type === "remote" ? "remote" : "local";
+    const exp = nowSec + (accessType === "remote" ? 12 * 60 * 60 : 60 * 60);
 
     let authorizedBrowserHashes: string[] = Array.isArray(stored.authorized_browser_hashes)
       ? stored.authorized_browser_hashes.filter((value: unknown) => typeof value === "string").slice(0, 2)

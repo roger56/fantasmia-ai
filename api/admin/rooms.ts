@@ -1,3 +1,26 @@
+/**
+ * ============================================================================
+ * FANTASMIA - BACKEND REDIS PER STANZE E CLASSROOM
+ * Path: api/admin/rooms.ts
+ * ============================================================================
+ *
+ * Endpoint principale per lo stato condiviso delle stanze singole e dei gruppi
+ * Classroom con rotazione. Riceve comandi dal SU e dai writer, valida origine
+ * e autorizzazione, aggiorna Redis e restituisce lo stato normalizzato.
+ *
+ * Gestisce: creazione e ingresso, elenchi, turni, timer, pausa/ripresa,
+ * assegnazione round-robin, contributi narrativi, conclusione, suggerimenti,
+ * obblighi e messaggi fra partecipanti. Gli insiemi Redis rooms:all e
+ * groups:all indicizzano gli oggetti; i record di stanza e gruppo restano la
+ * fonte autorevole durante la sessione collaborativa.
+ *
+ * Il frontend dipende dai nomi delle action e dai campi definiti qui tramite
+ * groupSessionManager.ts e roomSessionManager.ts. Modificare in modo coordinato
+ * entrambi i lati. Timer e cambio turno devono essere atomici: una scrittura
+ * parziale può assegnare il writer alla stanza o alla storia sbagliata.
+ * ============================================================================
+ */
+
 // api/admin/rooms.ts
 /*
 ==================================================

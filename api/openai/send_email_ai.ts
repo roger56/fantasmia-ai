@@ -1,4 +1,25 @@
-// /api/sendmail.ts
+/**
+ * ============================================================================
+ * FANTASMIA - SERVIZIO EMAIL PER STORIE E ALLEGATI
+ * Path: api/openai/send_email_ai.ts
+ * ============================================================================
+ *
+ * Adattatore HTTP verso Resend utilizzato dal frontend per consegnare email
+ * generate da Fantasmia, compresi i pacchetti JSON delle storie NSU destinati
+ * al Superuser. Costruisce mittente e footer standard, valida il destinatario,
+ * inoltra gli eventuali allegati e restituisce l'identificativo dell'invio.
+ *
+ * Questo endpoint effettua il trasporto ma non archivia le storie: il JSON
+ * viene scaricato dal SU e importato nel suo Archivio Magico locale.
+ * Il destinatario di fallback serve solo come protezione legacy; la sorgente
+ * corretta dell'indirizzo resta la configurazione del SU.
+ *
+ * Attenzione: RESEND_API_KEY deve restare nelle variabili d'ambiente. Qualsiasi
+ * modifica a formato degli allegati o risposta API va coordinata con
+ * storyExportImport.ts, che decide quando marcare una storia come inviata.
+ * ============================================================================
+ */
+
 import { Resend } from 'resend';
 
 const resend = new Resend(process.env.RESEND_API_KEY);

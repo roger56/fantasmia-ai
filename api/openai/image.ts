@@ -131,7 +131,7 @@ if (style === 'sketch') {
 
        // 4. GENERAZIONE IMMAGINE - FORMATO BASE64
     const response = await client.images.generate({
-      model: "gpt-image-1",
+      model: (process.env.OPENAI_IMAGE_MODEL || "gpt-image-2.5-flare") as any,
       prompt: finalPrompt,
       n: 1,
       size: "1024x1024",

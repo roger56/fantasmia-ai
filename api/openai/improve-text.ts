@@ -91,21 +91,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         improvementType === "story" ? "narrativo" : "descrittivo"
       } mantenendo lo stile originale ma rendendolo più evocativo e coinvolgente:\n\n"${textToImprove}"`;
 
-      const completion = await client.chat.completions.create({
-        model: "gpt-4",
-        messages: [
-          {
-            role: "system",
-            content:
-              "Sei uno scrittore esperto. Migliora i testi mantenendo lo stile originale ma rendendoli più vividi ed emotivamente coinvolgenti.",
-          },
-          { role: "user", content: prompt },
-        ],
-        max_tokens: 1000,
-        temperature: 0.7,
+      const response = await client.responses.create({
+        model: process.env.OPENAI_TEXT_MODEL || "gpt-6-luna",
+        instructions:
+          "Sei uno scrittore esperto. Migliora i testi mantenendo lo stile originale ma rendendoli più vividi ed emotivamente coinvolgenti.",
+        input: prompt,
+        max_output_tokens: 1000,
+        reasoning: { effort: "none" },
+        store: false,
       });
 
-      const improvedText = completion.choices[0]?.message?.content?.trim();
+      const improvedText = response.output_text?.trim();
       if (!improvedText) throw new Error("No improved text generated");
 
       return res.status(200).json({
@@ -131,21 +127,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const prompt = `Crea una poesia ${style} sul tema: "${theme}". 
 La poesia deve essere in italiano, evocativa e suggestiva.`;
 
-      const completion = await client.chat.completions.create({
-        model: "gpt-4",
-        messages: [
-          {
-            role: "system",
-            content:
-              "Sei un poeta esperto. Crea poesie evocative e suggestive in italiano, mantenendo un tono poetico e ricco di immagini.",
-          },
-          { role: "user", content: prompt },
-        ],
-        max_tokens: 500,
-        temperature: 0.8,
+      const response = await client.responses.create({
+        model: process.env.OPENAI_TEXT_MODEL || "gpt-6-luna",
+        instructions:
+          "Sei un poeta esperto. Crea poesie evocative e suggestive in italiano, mantenendo un tono poetico e ricco di immagini.",
+        input: prompt,
+        max_output_tokens: 500,
+        reasoning: { effort: "none" },
+        store: false,
       });
 
-      const poetry = completion.choices[0]?.message?.content?.trim();
+      const poetry = response.output_text?.trim();
       if (!poetry) throw new Error("No poetry generated");
 
       return res.status(200).json({

@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import Cors from 'cors';
+import { Readable } from 'node:stream';
 import { NextApiRequest, NextApiResponse } from 'next';
 
 // CONFIGURAZIONE CORS DINAMICA - PER TUTTI I DOMINI LOVABLE
@@ -54,7 +55,92 @@ const client = new OpenAI({
 type Body = {
   prompt?: string;
   style?: string;
+  operation?: 'runway-create';
+  imageDataUrl?: string;
+  promptText?: string;
 };
+
+const RUNWAY_API_BASE = 'https://api.dev.runwayml.com/v1';
+const RUNWAY_API_VERSION = '2024-11-06';
+const TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function runwayHeaders(apiKey: string, json = false): Record<string, string> {
+  return {
+    Authorization: `Bearer ${apiKey}`,
+    'X-Runway-Version': RUNWAY_API_VERSION,
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+  };
+}
+
+async function readRunwayError(response: Response): Promise<string> {
+  const text = await response.text();
+  try {
+    const parsed = JSON.parse(text);
+    return parsed?.error || parsed?.message || parsed?.detail || text;
+  } catch {
+    return text;
+  }
+}
+
+async function getRunwayTask(taskId: string, apiKey: string) {
+  const response = await fetch(`${RUNWAY_API_BASE}/tasks/${taskId}`, {
+    headers: runwayHeaders(apiKey),
+  });
+  if (!response.ok) {
+    throw new Error(`Runway task ${response.status}: ${await readRunwayError(response)}`);
+  }
+  return response.json();
+}
+
+async function handleRunwayCreate(req: NextApiRequest, res: NextApiResponse) {
+  const apiKey = process.env.RUNWAYML_API_SECRET;
+  if (!apiKey) return res.status(503).json({ error: 'Runway non configurato' });
+
+  const imageDataUrl = String(req.body?.imageDataUrl || '');
+  const promptText = String(req.body?.promptText || '').trim();
+  if (!/^data:image\/(png|jpeg|jpg|webp);base64,/i.test(imageDataUrl)) {
+    return res.status(400).json({ error: 'Disegno AI mancante o non valido' });
+  }
+  if (Buffer.byteLength(imageDataUrl, 'utf8') > 3_800_000) {
+    return res.status(413).json({ error: 'Disegno troppo grande per Runway' });
+  }
+  if (!promptText || promptText.length > 1000) {
+    return res.status(400).json({ error: 'Testo della storia non valido' });
+  }
+
+  const response = await fetch(`${RUNWAY_API_BASE}/image_to_video`, {
+    method: 'POST',
+    headers: runwayHeaders(apiKey, true),
+    body: JSON.stringify({ model: 'gen4_turbo', promptImage: imageDataUrl, promptText, ratio: '1280:720', duration: 5 }),
+  });
+  if (!response.ok) {
+    return res.status(response.status).json({ error: 'Avvio del filmato non riuscito', detail: await readRunwayError(response) });
+  }
+  const task = await response.json();
+  return res.status(202).json({ taskId: task.id, status: task.status });
+}
+
+async function handleRunwayTask(req: NextApiRequest, res: NextApiResponse) {
+  const apiKey = process.env.RUNWAYML_API_SECRET;
+  if (!apiKey) return res.status(503).json({ error: 'Runway non configurato' });
+  const taskId = String(req.query.taskId || '');
+  if (!TASK_ID_PATTERN.test(taskId)) return res.status(400).json({ error: 'Task Runway non valido' });
+
+  const task = await getRunwayTask(taskId, apiKey);
+  if (req.query.download !== '1') {
+    return res.status(200).json({ taskId: task.id, status: task.status, failure: task.failure || task.failureCode || null });
+  }
+  if (task.status !== 'SUCCEEDED' || !Array.isArray(task.output) || !task.output[0]) {
+    return res.status(409).json({ error: 'Filmato non ancora disponibile' });
+  }
+  const videoResponse = await fetch(task.output[0]);
+  if (!videoResponse.ok || !videoResponse.body) return res.status(502).json({ error: 'Impossibile trasferire il filmato Runway' });
+  res.setHeader('Content-Type', videoResponse.headers.get('content-type') || 'video/mp4');
+  const length = videoResponse.headers.get('content-length');
+  if (length) res.setHeader('Content-Length', length);
+  res.setHeader('Cache-Control', 'private, no-store');
+  Readable.fromWeb(videoResponse.body as any).pipe(res);
+}
 
 // Mappatura degli stili con prompt ottimizzati
 const STYLES = {
@@ -76,6 +162,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
+  }
+
+  try {
+    if (req.method === 'POST' && req.body?.operation === 'runway-create') {
+      return await handleRunwayCreate(req, res);
+    }
+    if (req.method === 'GET' && req.query.operation === 'runway-task') {
+      return await handleRunwayTask(req, res);
+    }
+  } catch (error: any) {
+    console.error('Runway video error:', error);
+    return res.status(500).json({ error: 'Generazione filmato non riuscita', detail: String(error?.message || error) });
   }
 
   if (req.method !== "POST") {
@@ -178,3 +276,4 @@ if (style === 'sketch') {
     }
   }
 }
+

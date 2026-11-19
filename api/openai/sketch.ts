@@ -1,7 +1,13 @@
+/** TRACE 2.4: import ESM espliciti per il runtime Node.js; logica operativa invariata. */
+/** FANTASMIA TRACE 5B-R2 / 2.1 — AI/api/openai/sketch.ts.
+ * Solo osservatori di ingresso/errori; argomenti e risultati originali conservati. */
+import {tracePoint as __fantasmiaTracePoint,withTrace as __fantasmiaWithTrace,withTraceRequest as __fantasmiaWithTraceRequest} from "../../lib/traceRuntime.js";
 // apiopenaisketch.ts (o Daiproxytest.ts)
 import type { NextApiRequest, NextApiResponse } from 'next'; // Per type safety in Vercel/Next.js
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  async function handler(req: NextApiRequest, res: NextApiResponse) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/sketch.ts","handler_L4_C1");
+
   // CORS headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*'); // Configura in base alle origini consentite
@@ -73,6 +79,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       prompt: finalPrompt
     });
   } catch (error: any) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/sketch.ts","handler_L4_C1",true);
+
     return res.status(500).json({ error: `Failed to call OpenAI API, detail: ${error.message}` });
   }
 }
+
+export default __fantasmiaWithTrace("api/openai/sketch.ts",handler);

@@ -1,3 +1,9 @@
+/** TRACE 2.4: import ESM espliciti per il runtime Node.js; logica operativa invariata. */
+/** FANTASMIA TRACE 5B-R2 / 2.2 — AI/api/openai/image.ts.
+ * Correzione esclusivamente TypeScript; JavaScript emesso verificato identico. */
+/** FANTASMIA TRACE 5B-R2 / 2.1 — AI/api/openai/image.ts.
+ * Solo osservatori di ingresso/errori; argomenti e risultati originali conservati. */
+import {tracePoint as __fantasmiaTracePoint,withTrace as __fantasmiaWithTrace,withTraceRequest as __fantasmiaWithTraceRequest} from "../../lib/traceRuntime.js";
 import OpenAI from "openai";
 import Cors from 'cors';
 import { Readable } from 'node:stream';
@@ -6,6 +12,8 @@ import { NextApiRequest, NextApiResponse } from 'next';
 // CONFIGURAZIONE CORS DINAMICA - PER TUTTI I DOMINI LOVABLE
 const cors = Cors({
   origin: (origin, callback) => {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","origin_L8_C11");
+
     // Permetti tutti i domini Lovable + domini personalizzati
     const allowedDomains = [
       '.lovableproject.com',
@@ -22,7 +30,7 @@ const cors = Cors({
       'fantasmia-5tcgfmiwp-rogers-projects-68a7bd87.vercel.app',
     ];
     
-    if (!origin || allowedDomains.some(domain => origin.includes(domain))) {
+    if (!origin || allowedDomains.some(domain => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","callback_L25_C40"), (origin.includes(domain))))) {
       callback(null, true);
     } else {
       console.log('CORS blocked for origin:', origin);
@@ -38,8 +46,14 @@ const cors = Cors({
 
 // Helper per eseguire il middleware
 function runMiddleware(req: NextApiRequest, res: NextApiResponse, fn: any) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","runMiddleware_L40_C1");
+
   return new Promise((resolve, reject) => {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","callback_L41_C22");
+
     fn(req, res, (result: any) => {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","callback_L42_C18");
+
       if (result instanceof Error) {
         return reject(result);
       }
@@ -60,11 +74,22 @@ type Body = {
   promptText?: string;
 };
 
+/** Forma attesa delle risposte Runway: solo annotazione, nessuna validazione aggiunta. */
+interface RunwayTask {
+  id?: string;
+  status?: string;
+  failure?: string;
+  failureCode?: string;
+  output?: string[];
+}
+
 const RUNWAY_API_BASE = 'https://api.dev.runwayml.com/v1';
 const RUNWAY_API_VERSION = '2024-11-06';
 const TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function runwayHeaders(apiKey: string, json = false): Record<string, string> {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","runwayHeaders_L67_C1");
+
   return {
     Authorization: `Bearer ${apiKey}`,
     'X-Runway-Version': RUNWAY_API_VERSION,
@@ -73,26 +98,34 @@ function runwayHeaders(apiKey: string, json = false): Record<string, string> {
 }
 
 async function readRunwayError(response: Response): Promise<string> {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","readRunwayError_L75_C1");
+
   const text = await response.text();
   try {
     const parsed = JSON.parse(text);
     return parsed?.error || parsed?.message || parsed?.detail || text;
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","readRunwayError_L75_C1",true);
+
     return text;
   }
 }
 
 async function getRunwayTask(taskId: string, apiKey: string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","getRunwayTask_L85_C1");
+
   const response = await fetch(`${RUNWAY_API_BASE}/tasks/${taskId}`, {
     headers: runwayHeaders(apiKey),
   });
   if (!response.ok) {
     throw new Error(`Runway task ${response.status}: ${await readRunwayError(response)}`);
   }
-  return response.json();
+  return response.json() as Promise<RunwayTask>;
 }
 
 async function handleRunwayCreate(req: NextApiRequest, res: NextApiResponse) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","handleRunwayCreate_L95_C1");
+
   const apiKey = process.env.RUNWAYML_API_SECRET;
   if (!apiKey) return res.status(503).json({ error: 'Runway non configurato' });
 
@@ -116,11 +149,13 @@ async function handleRunwayCreate(req: NextApiRequest, res: NextApiResponse) {
   if (!response.ok) {
     return res.status(response.status).json({ error: 'Avvio del filmato non riuscito', detail: await readRunwayError(response) });
   }
-  const task = await response.json();
+  const task = await response.json() as RunwayTask;
   return res.status(202).json({ taskId: task.id, status: task.status });
 }
 
 async function handleRunwayTask(req: NextApiRequest, res: NextApiResponse) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","handleRunwayTask_L123_C1");
+
   const apiKey = process.env.RUNWAYML_API_SECRET;
   if (!apiKey) return res.status(503).json({ error: 'Runway non configurato' });
   const taskId = String(req.query.taskId || '');
@@ -156,7 +191,9 @@ const STYLES = {
 // Prompt anti-testo ottimizzato IN INGLESE
 const ANTI_TEXT_PROMPT = "STRICT NO TEXT POLICY: Absolutely no text, no words, no letters, no numbers, no symbols, no signatures, no logos, no writing of any kind in any language. Completely text-free image.";
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  async function handler(req: NextApiRequest, res: NextApiResponse) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","handler_L159_C1");
+
   // Esegui il middleware CORS PER PRIMO
   await runMiddleware(req, res, cors);
 
@@ -172,6 +209,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return await handleRunwayTask(req, res);
     }
   } catch (error: any) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","handler_L159_C1",true);
+
     console.error('Runway video error:', error);
     return res.status(500).json({ error: 'Generazione filmato non riuscita', detail: String(error?.message || error) });
   }
@@ -255,6 +294,8 @@ if (style === 'sketch') {
     });
 
   } catch (err: any) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/image.ts","handler_L159_C1",true);
+
     console.error("Image generation error:", err);
 
     // Gestione errori specifici di OpenAI
@@ -277,3 +318,5 @@ if (style === 'sketch') {
   }
 }
 
+
+export default __fantasmiaWithTrace("api/openai/image.ts",handler);

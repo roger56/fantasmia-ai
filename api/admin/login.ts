@@ -1,3 +1,13 @@
+/** TRACE 2.4: import ESM espliciti per il runtime Node.js; logica operativa invariata. */
+/** FANTASMIA TRACE 5B-R2 / 2.3 — AI/api/admin/login.ts.
+ * Il solo URL diagnostico viene riscritto qui da Vercel; login e altre action
+ * mantengono il percorso originale. Nessuna nuova funzione serverless. */
+import traceEndpoint from '../../lib/traceEndpoint.js';
+/** FANTASMIA TRACE 5B-R2 / 2.1 — AI/api/admin/login.ts.
+ * Solo osservatori di ingresso/errori; argomenti e risultati originali conservati. */
+import {tracePoint as __fantasmiaTracePoint,withTrace as __fantasmiaWithTrace,withTraceRequest as __fantasmiaWithTraceRequest} from "../../lib/traceRuntime.js";
+/** TRACE 5B-R2 / 2.1: config post-verifica; OFF nessuna lettura aggiuntiva. */
+import {sessionTraceForToken} from '../../lib/traceRuntime.js';
 // api/admin/login.ts
 /*
   ==================================================
@@ -148,12 +158,16 @@ const allowedOrigins: Array<string | RegExp> = [
 ];
 
 function isOriginAllowed(origin: string): boolean {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","isOriginAllowed_L152_C1");
+
   return allowedOrigins.some((item) =>
-    typeof item === "string" ? item === origin : item.test(origin)
+    (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","callback_L153_C30"), (typeof item === "string" ? item === origin : item.test(origin)))
   );
 }
 
 function applyCors(req: NextApiRequest, res: NextApiResponse) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","applyCors_L158_C1");
+
   const origin = String(req.headers.origin || "").trim();
 
   res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
@@ -185,13 +199,15 @@ function applyCors(req: NextApiRequest, res: NextApiResponse) {
 */
 
 const b64url = (obj: any): string =>
-  Buffer.from(JSON.stringify(obj))
+  (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","b64url_L189_C16"), (Buffer.from(JSON.stringify(obj))
     .toString("base64")
     .replace(/=/g, "")
     .replace(/\+/g, "-")
-    .replace(/\//g, "_");
+    .replace(/\//g, "_")));
 
 function signJwt(payload: any, jwtSecret: string): string {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","signJwt_L196_C1");
+
   const header = { alg: "HS256", typ: "JWT" };
   const toSign = `${b64url(header)}.${b64url(payload)}`;
 
@@ -220,11 +236,11 @@ const redis = Redis.fromEnv();
   ==================================================
 */
 
-const KEY_SU = (suName: string) => `auth:su:${suName}`;
-const KEY_NSU = (suName: string, nsuId: string) => `auth:nsu:${suName}:${nsuId}`;
-const KEY_NSU_LIST = (suName: string) => `auth:nsu_list:${suName}`;
-const KEY_REMOTE_LIST = (suName: string) => `auth:remote_list:${suName}`;
-const KEY_REMOTE_ACCESS = (accessId: string) => `ot_access:${accessId}`;
+const KEY_SU = (suName: string) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","KEY_SU_L225_C16"), (`auth:su:${suName}`));
+const KEY_NSU = (suName: string, nsuId: string) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","KEY_NSU_L226_C17"), (`auth:nsu:${suName}:${nsuId}`));
+const KEY_NSU_LIST = (suName: string) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","KEY_NSU_LIST_L227_C22"), (`auth:nsu_list:${suName}`));
+const KEY_REMOTE_LIST = (suName: string) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","KEY_REMOTE_LIST_L228_C25"), (`auth:remote_list:${suName}`));
+const KEY_REMOTE_ACCESS = (accessId: string) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","KEY_REMOTE_ACCESS_L229_C27"), (`ot_access:${accessId}`));
 
 /*
   ==================================================
@@ -233,10 +249,14 @@ const KEY_REMOTE_ACCESS = (accessId: string) => `ot_access:${accessId}`;
 */
 
 function normalizeSuName(value: any): string {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","normalizeSuName_L237_C1");
+
   return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function normalizeNsuId(value: any): string {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","normalizeNsuId_L241_C1");
+
   return String(value || "")
     .trim()
     .toLowerCase()
@@ -246,16 +266,22 @@ function normalizeNsuId(value: any): string {
 }
 
 function normalizePin4(value: any): string {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","normalizePin4_L250_C1");
+
   const pin = String(value || "").trim();
   return /^\d{4}$/.test(pin) ? pin : "";
 }
 
 function normalizeOpaqueId(value: any): string {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","normalizeOpaqueId_L255_C1");
+
   const id = String(value || "").trim();
   return id.length >= 8 && id.length <= 200 ? id : "";
 }
 
 function hashOpaqueId(value: string): string {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","hashOpaqueId_L260_C1");
+
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
@@ -266,6 +292,8 @@ function hashOpaqueId(value: string): string {
 */
 
 function hashPasswordPBKDF2(plain: string, saltHex?: string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","hashPasswordPBKDF2_L270_C1");
+
   const salt = saltHex ? Buffer.from(saltHex, "hex") : crypto.randomBytes(16);
   const iterations = 120_000;
   const keylen = 32;
@@ -284,6 +312,8 @@ function hashPasswordPBKDF2(plain: string, saltHex?: string) {
 }
 
 function timingSafeEqualHex(aHex: string, bHex: string): boolean {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","timingSafeEqualHex_L288_C1");
+
   const a = Buffer.from(aHex, "hex");
   const b = Buffer.from(bHex, "hex");
 
@@ -301,6 +331,8 @@ function timingSafeEqualHex(aHex: string, bHex: string): boolean {
 */
 
 function verifyAdminBearer(req: NextApiRequest): boolean {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","verifyAdminBearer_L305_C1");
+
   const auth = String(req.headers.authorization || "").trim();
 
   if (!auth.startsWith("Bearer ")) {
@@ -334,6 +366,8 @@ function verifyAdminBearer(req: NextApiRequest): boolean {
   try {
     payload = JSON.parse(Buffer.from(payloadEncoded, "base64url").toString());
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","verifyAdminBearer_L305_C1",true);
+
     return false;
   }
 
@@ -353,6 +387,8 @@ function verifyAdminBearer(req: NextApiRequest): boolean {
 }
 
 function verifySuBearer(req: NextApiRequest): { ok: boolean; su_name?: string } {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","verifySuBearer_L357_C1");
+
   const auth = String(req.headers.authorization || "").trim();
 
   if (!auth.startsWith("Bearer ")) {
@@ -386,6 +422,8 @@ function verifySuBearer(req: NextApiRequest): { ok: boolean; su_name?: string } 
   try {
     payload = JSON.parse(Buffer.from(payloadEncoded, "base64url").toString());
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","verifySuBearer_L357_C1",true);
+
     return { ok: false };
   }
 
@@ -417,6 +455,8 @@ function verifyNsuBearer(req: NextApiRequest): {
   access_type?: "local" | "remote";
   session_hash?: string;
 } {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","verifyNsuBearer_L415_C1");
+
   const auth = String(req.headers.authorization || "").trim();
   if (!auth.startsWith("Bearer ")) return { ok: false };
 
@@ -447,6 +487,8 @@ function verifyNsuBearer(req: NextApiRequest): {
       session_hash: typeof payload.session_hash === "string" ? payload.session_hash : undefined,
     };
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","verifyNsuBearer_L415_C1",true);
+
     return { ok: false };
   }
 }
@@ -461,6 +503,8 @@ function verifyNsuBearer(req: NextApiRequest): {
   2. DEFAULT_HUB_URL da Vercel env
 */
 function resolveHubUrl(record: any): string | undefined {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","resolveHubUrl_L465_C1");
+
   return record?.hub_url || process.env.DEFAULT_HUB_URL || undefined;
 }
 
@@ -470,10 +514,14 @@ function resolveHubUrl(record: any): string | undefined {
   ==================================================
 */
 
-export default async function handler(
+  async function handler(
   req: NextApiRequest,
   res: NextApiResponse<ApiOk | ApiErr>
 ) {
+  // Dispatch diagnostico separato prima di qualsiasi logica di autenticazione.
+  if (req.query?.__fantasmia_trace_endpoint === '1') return traceEndpoint(req,res);
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","handler_L475_C1");
+
   const cors = applyCors(req, res);
 
   if (req.method === "OPTIONS") {
@@ -497,6 +545,8 @@ export default async function handler(
   try {
     body = typeof req.body === "string" ? JSON.parse(req.body) : req.body ?? {};
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","handler_L475_C1",true);
+
     body = {};
   }
 
@@ -572,6 +622,7 @@ export default async function handler(
 
     return res.status(200).json({
       success: true,
+      ...(await sessionTraceForToken(String(req.headers.authorization||'').slice(7))),
       su_name: stored.su_name,
       su_email: stored.su_email || "",
       su_cell: stored.su_cell || "",
@@ -647,6 +698,7 @@ export default async function handler(
 
     return res.status(200).json({
       success: true,
+      ...(await sessionTraceForToken(token)),
       token,
       role: "SUPERUSER",
       su_name: suName,
@@ -823,7 +875,7 @@ export default async function handler(
       });
     }
 
-    items.sort((a, b) => Number(b.created_at || 0) - Number(a.created_at || 0));
+    items.sort((a, b) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","callback_L830_C16"), (Number(b.created_at || 0) - Number(a.created_at || 0))));
     return res.status(200).json({ success: true, items });
   }
 
@@ -875,6 +927,8 @@ export default async function handler(
     }
 
     items.sort((a, b) => {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","callback_L881_C16");
+
       const enabledA = a.enabled ? 1 : 0;
       const enabledB = b.enabled ? 1 : 0;
 
@@ -1024,6 +1078,7 @@ export default async function handler(
 
     return res.status(200).json({
       success: true,
+      ...(active?await sessionTraceForToken(String(req.headers.authorization||'').slice(7)):(process.env.FANTASMIA_TRACE_ENABLED==='1'?{trace_config:null}:{})),
       active,
       access_type: accessType,
       authorized_browser_count: Array.isArray(stored.authorized_browser_hashes)
@@ -1091,7 +1146,7 @@ export default async function handler(
     const exp = nowSec + (accessType === "remote" ? 12 * 60 * 60 : 60 * 60);
 
     let authorizedBrowserHashes: string[] = Array.isArray(stored.authorized_browser_hashes)
-      ? stored.authorized_browser_hashes.filter((value: unknown) => typeof value === "string").slice(0, 2)
+      ? stored.authorized_browser_hashes.filter((value: unknown) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/login.ts","callback_L1099_C49"), (typeof value === "string"))).slice(0, 2)
       : [];
     let browserHash: string | null = null;
     let sessionHash: string | null = null;
@@ -1161,6 +1216,7 @@ export default async function handler(
 
     return res.status(200).json({
       success: true,
+      ...(await sessionTraceForToken(token)),
       su_name: suName,
       nsu_id: nsuId,
       display_name: stored.display_name,
@@ -1235,3 +1291,5 @@ export default async function handler(
     ...(hubUrl ? { hub_url: hubUrl } : {}),
   });
 }
+
+export default __fantasmiaWithTrace("api/admin/login.ts",handler);

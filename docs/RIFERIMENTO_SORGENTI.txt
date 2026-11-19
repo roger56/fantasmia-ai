@@ -1,0 +1,4 @@
+FANTASMIA — riferimento sorgenti 2026-11-19
+Ramo: reference/fantasmia-trace-20261119
+Leggere README.md nella radice del progetto.
+Chiavi e configurazione installazione: fase successiva, da riprendere esplicitamente.

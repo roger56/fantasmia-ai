@@ -1,3 +1,7 @@
+/** TRACE 2.4: import ESM espliciti per il runtime Node.js; logica operativa invariata. */
+/** FANTASMIA TRACE 5B-R2 / 2.1 — AI/api/openai/send_email_ai.ts.
+ * Solo osservatori di ingresso/errori; argomenti e risultati originali conservati. */
+import {tracePoint as __fantasmiaTracePoint,withTrace as __fantasmiaWithTrace,withTraceRequest as __fantasmiaWithTraceRequest} from "../../lib/traceRuntime.js";
 /**
  * ============================================================================
  * FANTASMIA - SERVIZIO EMAIL PER STORIE E ALLEGATI
@@ -41,7 +45,9 @@ type EmailRequest = {
 const DEFAULT_TO = 'quando.ruggero@gmail.com';
 const GMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@gmail\.com$/;
 
-export async function POST(request: Request) {
+ async function POST(request: Request) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/send_email_ai.ts","POST_L44_C1");
+
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -86,11 +92,11 @@ ${html}
     };
 
     if (attachments && attachments.length > 0) {
-      emailData.attachments = attachments.map(a => ({
+      emailData.attachments = attachments.map(a => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/send_email_ai.ts","callback_L89_C47"), (({
         filename: a.filename,
         content: a.content,
         content_type: a.contentType || 'application/octet-stream',
-      }));
+      }))));
     }
 
     const { data, error } = await resend.emails.send(emailData);
@@ -115,6 +121,8 @@ ${html}
     );
 
   } catch (error: any) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/send_email_ai.ts","POST_L44_C1",true);
+
     console.error('Unexpected error:', error);
     return Response.json(
       { error: 'Internal server error: ' + error.message },
@@ -124,6 +132,8 @@ ${html}
 }
 
 export async function OPTIONS() {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/send_email_ai.ts","OPTIONS_L126_C1");
+
   return new Response(null, {
     status: 200,
     headers: {
@@ -133,3 +143,6 @@ export async function OPTIONS() {
     },
   });
 }
+
+const __fantasmiaPOST=__fantasmiaWithTraceRequest("api/openai/send_email_ai.ts",POST);
+export {__fantasmiaPOST as POST};

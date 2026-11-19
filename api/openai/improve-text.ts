@@ -1,3 +1,7 @@
+/** TRACE 2.4: import ESM espliciti per il runtime Node.js; logica operativa invariata. */
+/** FANTASMIA TRACE 5B-R2 / 2.1 — AI/api/openai/improve-text.ts.
+ * Solo osservatori di ingresso/errori; argomenti e risultati originali conservati. */
+import {tracePoint as __fantasmiaTracePoint,withTrace as __fantasmiaWithTrace,withTraceRequest as __fantasmiaWithTraceRequest} from "../../lib/traceRuntime.js";
 import { NextApiRequest, NextApiResponse } from "next";
 import Cors from "cors";
 import OpenAI from "openai";
@@ -5,6 +9,8 @@ import OpenAI from "openai";
 // ===== CORS (unificato: include anche lovable.dev) =====
 const cors = Cors({
   origin: (origin, callback) => {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/improve-text.ts","origin_L7_C11");
+
     // Permetti tutti i domini Lovable + domini personalizzati
     const allowedDomains = [
       '.lovableproject.com',
@@ -21,7 +27,7 @@ const cors = Cors({
       'fantasmia-5tcgfmiwp-rogers-projects-68a7bd87.vercel.app',
     ];
 
-    if (!origin || allowedDomains.some((d) => origin.includes(d))) {
+    if (!origin || allowedDomains.some((d) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/improve-text.ts","callback_L24_C40"), (origin.includes(d))))) {
       callback(null, true);
     } else {
       console.log("CORS blocked for origin:", origin);
@@ -37,8 +43,14 @@ const cors = Cors({
 
 // Middleware helper
 function runMiddleware(req: NextApiRequest, res: NextApiResponse, fn: any) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/improve-text.ts","runMiddleware_L39_C1");
+
   return new Promise((resolve, reject) => {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/improve-text.ts","callback_L40_C22");
+
     fn(req, res, (result: any) => {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/improve-text.ts","callback_L41_C18");
+
       if (result instanceof Error) return reject(result);
       return resolve(result);
     });
@@ -50,6 +62,8 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 // Helpers
 function pickMode(body: any): "improve" | "poetry" {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/improve-text.ts","pickMode_L52_C1");
+
   // Nuovo: mode esplicito
   const mode = String(body?.mode || "").toLowerCase().trim();
   if (mode === "poetry") return "poetry";
@@ -62,7 +76,9 @@ function pickMode(body: any): "improve" | "poetry" {
   return "improve";
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  async function handler(req: NextApiRequest, res: NextApiResponse) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/improve-text.ts","handler_L65_C1");
+
   await runMiddleware(req, res, cors);
 
   if (req.method === "OPTIONS") return res.status(200).end();
@@ -150,6 +166,8 @@ La poesia deve essere in italiano, evocativa e suggestiva.`;
 
     return res.status(400).json({ error: "Unknown mode" });
   } catch (err: any) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/improve-text.ts","handler_L65_C1",true);
+
     console.error("Improve/Poetry error:", err);
     return res.status(500).json({
       error: "Request failed",
@@ -157,3 +175,5 @@ La poesia deve essere in italiano, evocativa e suggestiva.`;
     });
   }
 }
+
+export default __fantasmiaWithTrace("api/openai/improve-text.ts",handler);

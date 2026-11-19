@@ -1,3 +1,9 @@
+/** TRACE 2.4: import ESM espliciti per il runtime Node.js; logica operativa invariata. */
+/** FANTASMIA TRACE 5B-R2 / 2.1 — AI/api/openai/claim-link-one-time.ts.
+ * Solo osservatori di ingresso/errori; argomenti e risultati originali conservati. */
+import {tracePoint as __fantasmiaTracePoint,withTrace as __fantasmiaWithTrace,withTraceRequest as __fantasmiaWithTraceRequest} from "../../lib/traceRuntime.js";
+/** TRACE 5B-R2 / 2.1: config OTL dopo claim esistente. */
+import {sessionTraceForToken} from '../../lib/traceRuntime.js';
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "crypto";
 import { Redis } from "@upstash/redis";
@@ -109,10 +115,14 @@ const allowedOrigins: Array<string | RegExp> = [
 ];
 
 function isOriginAllowed(origin: string) {
-  return allowedOrigins.some((o) => (typeof o === "string" ? o === origin : o.test(origin)));
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/claim-link-one-time.ts","isOriginAllowed_L113_C1");
+
+  return allowedOrigins.some((o) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/claim-link-one-time.ts","callback_L114_C30"), ((typeof o === "string" ? o === origin : o.test(origin)))));
 }
 
 function setCors(req: NextApiRequest, res: NextApiResponse) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/claim-link-one-time.ts","setCors_L117_C1");
+
   const origin = req.headers.origin || "";
   if (origin && isOriginAllowed(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
@@ -128,12 +138,16 @@ function setCors(req: NextApiRequest, res: NextApiResponse) {
 
 // base64url -> utf8
 function b64urlToString(s: string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/claim-link-one-time.ts","b64urlToString_L132_C1");
+
   const b64 = s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4);
   return Buffer.from(b64, "base64").toString("utf8");
 }
 
 // HMAC SHA256 su JSON payload -> base64url
 function sign(payloadJson: string, secret: string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/claim-link-one-time.ts","sign_L138_C1");
+
   return crypto
     .createHmac("sha256", secret)
     .update(payloadJson)
@@ -144,6 +158,8 @@ function sign(payloadJson: string, secret: string) {
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/claim-link-one-time.ts","normalizeOptionalString_L148_C1");
+
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
@@ -151,7 +167,9 @@ function normalizeOptionalString(value: unknown): string | undefined {
 
 
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiOk | ApiErr>) {
+  async function handler(req: NextApiRequest, res: NextApiResponse<ApiOk | ApiErr>) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/claim-link-one-time.ts","handler_L156_C1");
+
   const corsOk = setCors(req, res);
 
   if (req.method === "OPTIONS") {
@@ -169,6 +187,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   try {
     body = (typeof req.body === "string" ? JSON.parse(req.body) : (req.body ?? {})) as Body;
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/claim-link-one-time.ts","handler_L156_C1",true);
+
     body = {};
   }
 
@@ -187,6 +207,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   try {
     payloadJson = b64urlToString(payloadB64);
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/claim-link-one-time.ts","handler_L156_C1",true);
+
     return res.status(400).json({ ok: false, error: "Invalid token payload" });
   }
 
@@ -199,6 +221,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   try {
     payload = JSON.parse(payloadJson);
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/claim-link-one-time.ts","handler_L156_C1",true);
+
     return res.status(400).json({ ok: false, error: "Invalid token JSON" });
   }
 
@@ -311,6 +335,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   return res.status(200).json({
     ok: true,
+    ...(await sessionTraceForToken(token)),
     user: { username, type: "NSU_ONE_TIME" },
     profileName: username,
     su_name,
@@ -324,3 +349,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     created_by: "SU",
   });
 }
+
+export default __fantasmiaWithTrace("api/openai/claim-link-one-time.ts",handler);

@@ -4,3 +4,13 @@ node_modules
 .vercel
 .next
 git
+
+# Configurazione locale: da compilare nella fase successiva.
+.env
+.env.*
+!.env.example
+OPEN_AI_KEY
+.vercel/
+node_modules/
+dist/
+.next/

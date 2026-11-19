@@ -1,3 +1,7 @@
+/** TRACE 2.4: import ESM espliciti per il runtime Node.js; logica operativa invariata. */
+/** FANTASMIA TRACE 5B-R2 / 2.1 — AI/api/openai/sm/rt-token.ts.
+ * Solo osservatori di ingresso/errori; argomenti e risultati originali conservati. */
+import {tracePoint as __fantasmiaTracePoint,withTrace as __fantasmiaWithTrace,withTraceRequest as __fantasmiaWithTraceRequest} from "../../../lib/traceRuntime.js";
 /**
  * Endpoint serverless per generare una chiave temporanea Speechmatics
  * destinata al riconoscimento vocale realtime dal browser.
@@ -28,6 +32,8 @@ import type { NextApiRequest, NextApiResponse } from "next";
 
 const cors = Cors({
   origin: (origin, callback) => {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/sm/rt-token.ts","origin_L30_C11");
+
 	const allowed = [
 	  ".lovableproject.com",
 	  ".lovable.app",
@@ -40,7 +46,7 @@ const cors = Cors({
         "www.fantasmia.it",
 	  "fantasmia-5tcgfmiwp-rogers-projects-68a7bd87.vercel.app",
 	];
-    if (!origin || allowed.some((d) => origin.includes(d))) callback(null, true);
+    if (!origin || allowed.some((d) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/sm/rt-token.ts","callback_L43_C33"), (origin.includes(d))))) callback(null, true);
     else callback(new Error("Not allowed by CORS"));
   },
   methods: ["POST", "OPTIONS"],
@@ -50,8 +56,12 @@ const cors = Cors({
 });
 
 function runMiddleware(req: NextApiRequest, res: NextApiResponse, fn: any) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/sm/rt-token.ts","runMiddleware_L52_C1");
+
   return new Promise<void>((resolve, reject) => {
-    fn(req, res, (result: any) => (result instanceof Error ? reject(result) : resolve()));
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/sm/rt-token.ts","callback_L53_C28");
+
+    fn(req, res, (result: any) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/sm/rt-token.ts","callback_L54_C18"), ((result instanceof Error ? reject(result) : resolve()))));
   });
 }
 
@@ -64,7 +74,9 @@ type SpeechmaticsTempKeyResponse = {
   [k: string]: unknown;
 };
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  async function handler(req: NextApiRequest, res: NextApiResponse) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/sm/rt-token.ts","handler_L67_C1");
+
   // CORS
   await runMiddleware(req, res, cors);
 
@@ -83,6 +95,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     body = (typeof req.body === "string" ? JSON.parse(req.body) : (req.body ?? {})) as Body;
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/sm/rt-token.ts","handler_L67_C1",true);
+
     body = {};
   }
 
@@ -103,6 +117,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     data = (await smResp.json()) as SpeechmaticsTempKeyResponse;
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/sm/rt-token.ts","handler_L67_C1",true);
+
     // keep raw fallback; smResp.ok handling below will surface it
     data = { error: "Invalid JSON from Speechmatics" };
   }
@@ -128,3 +144,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     ttl,
   });
 }
+
+export default __fantasmiaWithTrace("api/openai/sm/rt-token.ts",handler);

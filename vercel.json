@@ -4,6 +4,16 @@
     "api/**/*.ts": {
       "runtime": "@vercel/node@5.5.28"
     }
+  },
+  "rewrites": [
+    {
+      "source": "/api/admin/trace",
+      "destination": "/api/admin/login?__fantasmia_trace_endpoint=1"
+    }
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "reference/fantasmia-trace-20261119": false
+    }
   }
 }
-

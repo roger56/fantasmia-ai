@@ -4,9 +4,10 @@ Repository: `roger56/fantasmia-ai`. Ramo di riferimento: `reference/fantasmia-tr
 Baseline: **TRACE 5B-R2 2.6 collaudato + consolidamento sorgenti**.
 
 Questa cartella e il progetto completo. Non sovrapporre vecchi ZIP di correzione.
-Le credenziali e la configurazione di un'installazione sono rimandate alla fase
-successiva; `.env.example` e un modello senza valori. Nessuna chiave va copiata
-automaticamente dalle vecchie prove.
+Aggiornamento del collaudo locale: **22 novembre 2026**. Accessi SU/NSU, salvataggio
+e riapertura storia, TRACE WEB/AI e mail automatica al SU verificati sul PC.
+Le credenziali restano private e non sono incluse nei sorgenti; `.env.example`
+e un modello senza valori. Per una nuova macchina configurarle separatamente.
 
 ## Stato
 
@@ -15,7 +16,7 @@ automaticamente dalle vecchie prove.
 - Ultimo report esaminato: coppia AI/WEB con identico request_id, utente e ruolo NSU.
 - TRACE circolare 2 MB logici per utente; attivazione su richiesta; nessun nuovo polling.
 - API operative e autorizzazioni conservate. Nessuna generazione AI a pagamento eseguita nei test controllati.
-- Configurazione chiavi/ambienti, installazione operativa e rilascio in produzione: fase successiva.
+- Configurazione locale verificata sul PC; nuova macchina e produzione richiedono configurazione propria.
 
 ## Backend AI consolidato
 
@@ -36,8 +37,12 @@ npx --no-install tsc --noEmit
 ```
 
 `npm run build` stampa soltanto un messaggio: non sostituisce il controllo TypeScript.
-Dipendenze e lockfile sono invariati. Le configurazioni e le chiavi dei servizi
-saranno definite nella fase successiva, prima di un'installazione/deployment operativo.
+Dipendenze e lockfile sono invariati. Con Vercel CLI 48.9.2, il server locale
+usa una configurazione ignorata in `.vercel/fantasmia-dev.json`, generata con
+i 12 entrypoint `.ts` espliciti e `zeroConfig: true`; conserva il rewrite TRACE.
+Il pacchetto cumulativo contiene PREPARA_LOCALE.cmd e AVVIA_AI_LOCALE.cmd.
+Non usare direttamente `npm run dev`: il suo comando ricorsivo e preesistente.
+Il collaudo locale usa Node 22.17.0 e le chiavi private del PC, mai incluse nello ZIP.
 
 ## Documentazione
 
@@ -46,8 +51,10 @@ precedente e conservato in `docs/STORICO/README_PRE_RIFERIMENTO.md`.
 Le vecchie guide, patch e documenti di migrazione restano storici: non sono
 pacchetti da applicare sopra questa cartella.
 
-**Prossimo passo da ricordare:** chiavi, variabili d'ambiente, URL/domìni, configurazione
-dell'installazione e verifica degli ambienti. Questo riordino riguarda i sorgenti.
+**Prossimo passo da ricordare:** completare la configurazione privata di ogni
+nuova installazione e concordare separatamente il rilascio in produzione.
+Il README.txt e la guida CONFIGURAZIONE_LOCALE.txt del pacchetto cumulativo
+contengono i comandi verificati. Non pubblicare le chiavi su GitHub.
 
 ## Pubblicazione separata dall'installazione
 

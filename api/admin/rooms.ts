@@ -1,3 +1,7 @@
+/** TRACE 2.4: import ESM espliciti per il runtime Node.js; logica operativa invariata. */
+/** FANTASMIA TRACE 5B-R2 / 2.1 — AI/api/admin/rooms.ts.
+ * Solo osservatori di ingresso/errori; argomenti e risultati originali conservati. */
+import {tracePoint as __fantasmiaTracePoint,withTrace as __fantasmiaWithTrace,withTraceRequest as __fantasmiaWithTraceRequest} from "../../lib/traceRuntime.js";
 /**
  * ============================================================================
  * FANTASMIA - BACKEND REDIS PER STANZE E CLASSROOM
@@ -99,12 +103,16 @@ const allowedOrigins: Array<string | RegExp> = [
 ];
 
 function isOriginAllowed(origin: string): boolean {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","isOriginAllowed_L101_C1");
+
   return allowedOrigins.some((item) =>
-    typeof item === "string" ? item === origin : item.test(origin)
+    (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L102_C30"), (typeof item === "string" ? item === origin : item.test(origin)))
   );
 }
 
 function applyCors(req: NextApiRequest, res: NextApiResponse) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","applyCors_L107_C1");
+
   const origin = String(req.headers.origin || "").trim();
   res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
   res.setHeader(
@@ -265,19 +273,23 @@ type ApiErrorBody = { error: string; details?: string };
 
 /* ================================================== REDIS / KEYS ================================================== */
 const redis = Redis.fromEnv();
-const KEY_ROOM = (room: string) => `rooms:room:${room}`;
+const KEY_ROOM = (room: string) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","KEY_ROOM_L268_C18"), (`rooms:room:${room}`));
 const KEY_ROOMS_SET = "rooms:all";
-const KEY_GROUP = (groupId: string) => `groups:group:${groupId}`;
+const KEY_GROUP = (groupId: string) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","KEY_GROUP_L270_C19"), (`groups:group:${groupId}`));
 const KEY_GROUPS_SET = "groups:all";
 
 /* ================================================== UTILS ================================================== */
-const now = () => Date.now();
+const now = () => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","now_L274_C13"), (Date.now()));
 
 function normalizeKey(value: any): string {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","normalizeKey_L276_C1");
+
   return value ? String(value).trim() : "";
 }
 
 function clampNumber(value: any, fallback: number, min?: number, max?: number): number {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","clampNumber_L280_C1");
+
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
   if (min !== undefined && n < min) return min;
@@ -286,26 +298,36 @@ function clampNumber(value: any, fallback: number, min?: number, max?: number): 
 }
 
 function normalizeRoomMode(value: any): RoomMode {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","normalizeRoomMode_L288_C1");
+
   if (value === "CAMPBELL" || value === "PROPP" || value === "CONTINUA_TU") return value;
   return "CONTINUA_TU";
 }
 
 function bump(state: RoomState | GroupState) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","bump_L293_C1");
+
   state.version = (state.version || 0) + 1;
   state.updated_at = now();
 }
 
 function parseRoomsArray(value: any): string[] {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","parseRoomsArray_L298_C1");
+
   if (!Array.isArray(value)) return [];
-  return value.map((room) => normalizeKey(room)).filter(Boolean);
+  return value.map((room) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L300_C20"), (normalizeKey(room)))).filter(Boolean);
 }
 
 function safeMessage(err: unknown): string {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","safeMessage_L303_C1");
+
   if (err instanceof Error && err.message) return err.message;
   return "unexpected error";
 }
 
 function isRedisLimitError(err: unknown): boolean {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","isRedisLimitError_L308_C1");
+
   const msg = safeMessage(err).toLowerCase();
   return (
     msg.includes("free tier limit") ||
@@ -316,6 +338,8 @@ function isRedisLimitError(err: unknown): boolean {
 }
 
 function handleServerError(res: NextApiResponse, err: unknown) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","handleServerError_L318_C1");
+
   if (isRedisLimitError(err)) {
     return res.status(429).json({
       error: "Redis usage limit reached",
@@ -330,6 +354,8 @@ function handleServerError(res: NextApiResponse, err: unknown) {
 }
 
 function shuffled<T>(arr: T[]): T[] {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","shuffled_L332_C1");
+
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -339,16 +365,22 @@ function shuffled<T>(arr: T[]): T[] {
 }
 
 function pickRandom<T>(arr: T[]): T | null {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","pickRandom_L341_C1");
+
   if (!arr.length) return null;
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
 function shortId(prefix = "x"): string {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","shortId_L346_C1");
+
   return `${prefix}-${crypto.randomBytes(4).toString("hex")}`;
 }
 
 /* ================================================== ADMIN VERIFY ================================================== */
 function verifyAdmin(req: NextApiRequest): boolean {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","verifyAdmin_L351_C1");
+
   const auth = String(req.headers.authorization || "").trim();
   if (!auth.startsWith("Bearer ")) return false;
 
@@ -373,12 +405,16 @@ function verifyAdmin(req: NextApiRequest): boolean {
       payload.exp * 1000 > now()
     );
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","verifyAdmin_L351_C1",true);
+
     return false;
   }
 }
 
 /* ================================================== REDIS HELPERS - ROOMS ================================================== */
 function normalizeRoomState(room: string, state: RoomState): RoomState {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","normalizeRoomState_L381_C1");
+
   return {
     room_name: state.room_name || room,
     activity_title: state.activity_title || state.room_name || room,
@@ -409,6 +445,8 @@ function normalizeRoomState(room: string, state: RoomState): RoomState {
 }
 
 async function getRoom(room: string, cleanupExpired = false): Promise<RoomState | null> {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","getRoom_L411_C1");
+
   const state = await redis.get<RoomState>(KEY_ROOM(room));
   if (!state) return null;
   const normalized = normalizeRoomState(room, state);
@@ -423,12 +461,16 @@ async function getRoom(room: string, cleanupExpired = false): Promise<RoomState 
 }
 
 async function saveRoom(room: string, state: RoomState) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","saveRoom_L425_C1");
+
   const ttlSeconds = Math.max(60, Math.ceil((state.expires_at - now()) / 1000));
   await redis.set(KEY_ROOM(room), state, { ex: ttlSeconds });
   await redis.sadd(KEY_ROOMS_SET, room);
 }
 
 function toSummary(room: string, state: RoomState): RoomSummary {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","toSummary_L431_C1");
+
   return {
     room,
     room_name: state.room_name,
@@ -449,6 +491,8 @@ function toSummary(room: string, state: RoomState): RoomSummary {
 
 /* ================================================== REDIS HELPERS - GROUPS ================================================== */
 function normalizePoolItem(value: any, fallbackPrefix: string, idx: number): PoolItem | null {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","normalizePoolItem_L451_C1");
+
   if (typeof value === "string") {
     const text = value.trim();
     if (!text) return null;
@@ -464,13 +508,17 @@ function normalizePoolItem(value: any, fallbackPrefix: string, idx: number): Poo
 }
 
 function normalizePoolArray(value: any, prefix: string): PoolItem[] {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","normalizePoolArray_L466_C1");
+
   if (!Array.isArray(value)) return [];
   return value
-    .map((v, i) => normalizePoolItem(v, prefix, i))
-    .filter((x): x is PoolItem => !!x);
+    .map((v, i) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L469_C10"), (normalizePoolItem(v, prefix, i))))
+    .filter((x): x is PoolItem => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L470_C13"), (!!x)));
 }
 
 function normalizeFlightMap(value: any): Record<string, SuggestionFlight> {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","normalizeFlightMap_L473_C1");
+
   if (!value || typeof value !== "object") return {};
   const out: Record<string, SuggestionFlight> = {};
   for (const k of Object.keys(value)) {
@@ -483,6 +531,8 @@ function normalizeFlightMap(value: any): Record<string, SuggestionFlight> {
 }
 
 function normalizeExtrasState(value: any): ExtrasState | null {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","normalizeExtrasState_L485_C1");
+
   if (!value || typeof value !== "object") return null;
   const cfg = value.config || {};
   const config: ExtrasConfig = {
@@ -512,6 +562,8 @@ function normalizeExtrasState(value: any): ExtrasState | null {
 }
 
 function normalizeGroupState(groupId: string, state: GroupState): GroupState {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","normalizeGroupState_L514_C1");
+
   const turnNumber = Number(state.turn_number || 0);
   const turnPaused = Boolean(state.turn_paused);
   let status: GroupStatus = state.status || "waiting";
@@ -543,6 +595,8 @@ function normalizeGroupState(groupId: string, state: GroupState): GroupState {
 }
 
 async function getGroup(groupId: string, cleanupExpired = false): Promise<GroupState | null> {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","getGroup_L545_C1");
+
   if (!groupId) return null;
   const state = await redis.get<GroupState>(KEY_GROUP(groupId));
   if (!state) return null;
@@ -558,6 +612,8 @@ async function getGroup(groupId: string, cleanupExpired = false): Promise<GroupS
 }
 
 async function saveGroup(group: GroupState) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","saveGroup_L560_C1");
+
   const ttlSeconds = Math.max(60, Math.ceil((group.expires_at - now()) / 1000));
   await redis.set(KEY_GROUP(group.group_id), group, { ex: ttlSeconds });
   await redis.sadd(KEY_GROUPS_SET, group.group_id);
@@ -570,12 +626,16 @@ async function saveGroup(group: GroupState) {
  * Al turno 1 ogni writer parte dalla stanza con il proprio indice.
  */
 function getAssignedRoomIndex(writerIndex: number, turnNumber: number, N: number): number {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","getAssignedRoomIndex_L572_C1");
+
   if (N <= 0) return 0;
   const tn = Math.max(1, turnNumber || 1);
   return ((writerIndex - (tn - 1)) % N + N) % N;
 }
 
 function computeAssignments(group: GroupState): Record<string, string> {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","computeAssignments_L578_C1");
+
   const out: Record<string, string> = {};
   const N = group.rooms.length;
   if (N === 0) return out;
@@ -588,6 +648,8 @@ function computeAssignments(group: GroupState): Record<string, string> {
 }
 
 function computeAssignmentDetails(group: GroupState): AssignmentDetail[] {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","computeAssignmentDetails_L590_C1");
+
   const N = group.rooms.length;
   const details: AssignmentDetail[] = [];
   for (let wi = 0; wi < group.writers.length; wi++) {
@@ -608,6 +670,8 @@ function computeAssignmentDetails(group: GroupState): AssignmentDetail[] {
 }
 
 function findAssignedWriterForRoom(group: GroupState, roomName: string): string | null {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","findAssignedWriterForRoom_L610_C1");
+
   const N = group.rooms.length;
   if (N === 0) return null;
   const roomIdx = group.rooms.indexOf(roomName);
@@ -624,6 +688,8 @@ function parseExtrasConfigFromBody(
   expectedWriters: number,
   totalTurns: number
 ): ExtrasState | null {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","parseExtrasConfigFromBody_L622_C1");
+
   if (!ec || typeof ec !== "object") return null;
 
   // Formato CLIENT corrente
@@ -646,8 +712,8 @@ function parseExtrasConfigFromBody(
   let suggestionsPool: PoolItem[] = [];
   if (config.suggestions_enabled && Array.isArray(ec.suggestions_pool)) {
     const all = (ec.suggestions_pool as any[])
-      .map((t, i) => normalizePoolItem(t, "s", i))
-      .filter((x): x is PoolItem => !!x);
+      .map((t, i) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L649_C12"), (normalizePoolItem(t, "s", i))))
+      .filter((x): x is PoolItem => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L650_C15"), (!!x)));
     suggestionsPool = shuffled(all).slice(0, expectedWriters);
   }
 
@@ -655,8 +721,8 @@ function parseExtrasConfigFromBody(
   let obligationsPool: PoolItem[] = [];
   if (config.obligations_enabled && Array.isArray(ec.obligations_pool)) {
     const all = (ec.obligations_pool as any[])
-      .map((t, i) => normalizePoolItem(t, "o", i))
-      .filter((x): x is PoolItem => !!x);
+      .map((t, i) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L658_C12"), (normalizePoolItem(t, "o", i))))
+      .filter((x): x is PoolItem => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L659_C15"), (!!x)));
     const target = totalTurns > expectedWriters ? expectedWriters : Math.max(0, expectedWriters - 1);
     obligationsPool = shuffled(all).slice(0, target);
   }
@@ -678,23 +744,27 @@ function findCurrentObligationFor(
   group: GroupState,
   writerId: string
 ): { id: string; text: string; turn: number } | null {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","findCurrentObligationFor_L677_C1");
+
   if (!group.extras) return null;
   const entry = group.extras.obligations_log.find(
-    (e) => e.writer_id === writerId && e.turn === group.turn_number
+    (e) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L683_C5"), (e.writer_id === writerId && e.turn === group.turn_number))
   );
   if (!entry) return null;
   return { id: entry.obligation_id, text: entry.text, turn: entry.turn };
 }
 
 function maybeAssignObligationForTurn(group: GroupState): ObligationLogEntry | null {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","maybeAssignObligationForTurn_L689_C1");
+
   if (!group.extras || !group.extras.config.enabled || !group.extras.config.obligations_enabled) {
     return null;
   }
   if (group.turn_number <= 1) return null;
   if (!group.extras.obligations_pool.length) return null;
 
-  const alreadyAssigned = new Set(group.extras.obligations_log.map((e) => e.writer_id));
-  const candidates = group.writers.filter((w) => !alreadyAssigned.has(w));
+  const alreadyAssigned = new Set(group.extras.obligations_log.map((e) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L696_C68"), (e.writer_id))));
+  const candidates = group.writers.filter((w) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L697_C43"), (!alreadyAssigned.has(w))));
   if (!candidates.length) return null;
 
   const writer = pickRandom(candidates);
@@ -716,7 +786,9 @@ function maybeAssignObligationForTurn(group: GroupState): ObligationLogEntry | n
 }
 
 /* ================================================== HANDLER ================================================== */
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  async function handler(req: NextApiRequest, res: NextApiResponse) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","handler_L719_C1");
+
   const cors = applyCors(req, res);
   if (req.method === "OPTIONS") {
     return res.status(cors.ok ? 204 : 403).end();
@@ -726,7 +798,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   let body: any = req.body;
   if (typeof body === "string") {
-    try { body = JSON.parse(body); } catch { body = {}; }
+    try { body = JSON.parse(body); } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","handler_L719_C1",true);
+ body = {}; }
   }
   body = body || {};
   const action = String(body.action || "").trim();
@@ -826,7 +900,7 @@ if (action === "create") {
         const s = await getRoom(id, true);
         if (s) rooms.push(toSummary(id, s));
       }
-      rooms.sort((a, b) => b.updated_at - a.updated_at);
+      rooms.sort((a, b) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L829_C18"), (b.updated_at - a.updated_at)));
       return res.json({ success: true, rooms, now: now() });
     }
 
@@ -1033,10 +1107,12 @@ if (action === "create") {
           await saveRoom(room, state);
           results.push({ room, ok: true, status: 200, room_state: state });
         } catch (err) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","handler_L719_C1",true);
+
           results.push({ room, ok: false, status: 500, error: safeMessage(err) });
         }
       }
-      return res.json({ success: results.every((r) => r.ok), results, now: now() });
+      return res.json({ success: results.every((r) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L1039_C48"), (r.ok))), results, now: now() });
     }
 
     if (action === "group_pause_turn") {
@@ -1058,10 +1134,12 @@ if (action === "create") {
           await saveRoom(room, state);
           results.push({ room, ok: true, status: 200, room_state: state });
         } catch (err) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","handler_L719_C1",true);
+
           results.push({ room, ok: false, status: 500, error: safeMessage(err) });
         }
       }
-      return res.json({ success: results.every((r) => r.ok), results, now: now() });
+      return res.json({ success: results.every((r) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L1064_C48"), (r.ok))), results, now: now() });
     }
 
     if (action === "group_resume_turn") {
@@ -1085,10 +1163,12 @@ if (action === "create") {
           await saveRoom(room, state);
           results.push({ room, ok: true, status: 200, room_state: state });
         } catch (err) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","handler_L719_C1",true);
+
           results.push({ room, ok: false, status: 500, error: safeMessage(err) });
         }
       }
-      return res.json({ success: results.every((r) => r.ok), results, now: now() });
+      return res.json({ success: results.every((r) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L1091_C48"), (r.ok))), results, now: now() });
     }
 
     if (action === "group_delete_room") {
@@ -1108,10 +1188,12 @@ if (action === "create") {
           await saveRoom(room, state);
           results.push({ room, ok: true, status: 200 });
         } catch (err) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","handler_L719_C1",true);
+
           results.push({ room, ok: false, status: 500, error: safeMessage(err) });
         }
       }
-      return res.json({ success: results.every((r) => r.ok), results, now: now() });
+      return res.json({ success: results.every((r) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L1114_C48"), (r.ok))), results, now: now() });
     }
 
     /* -------------------- GROUP V2 -------------------- */
@@ -1208,7 +1290,7 @@ if (action === "create") {
         const group = await getGroup(id, true);
         if (group) groups.push(group);
       }
-      groups.sort((a, b) => b.updated_at - a.updated_at);
+      groups.sort((a, b) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L1211_C19"), (b.updated_at - a.updated_at)));
       return res.json({ success: true, groups, now: now() });
     }
 
@@ -1626,9 +1708,9 @@ if (action === "create") {
       }
 
       // Filtra il pool escludendo suggerimenti gia' assegnati ad ALTRI writer.
-      const assignedTexts = new Set(Object.values(used).map((u) => u.text));
+      const assignedTexts = new Set(Object.values(used).map((u) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L1629_C61"), (u.text))));
       const available = (group.extras.suggestions_pool || []).filter(
-        (p) => !assignedTexts.has(p.text)
+        (p) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L1631_C9"), (!assignedTexts.has(p.text)))
       );
       if (available.length === 0) {
         return res.status(400).json({ error: "no suggestions available" });
@@ -1724,8 +1806,8 @@ if (action === "create") {
         : null;
 
       const current_obligation = findCurrentObligationFor(group, writerId);
-      const qa_inbox = group.extras.qa_threads.filter((m) => m.to_writer === writerId);
-      const qa_outbox = group.extras.qa_threads.filter((m) => m.from_writer === writerId);
+      const qa_inbox = group.extras.qa_threads.filter((m) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L1727_C55"), (m.to_writer === writerId)));
+      const qa_outbox = group.extras.qa_threads.filter((m) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L1728_C56"), (m.from_writer === writerId)));
 
       const myFlight = group.extras.suggestion_in_flight_by_writer[writerId] || null;
       const my_in_flight_until =
@@ -1824,7 +1906,7 @@ if (action === "create") {
         obligations_log: extras.obligations_log || [],
         suggestions_log: extras.suggestions_log || [],
         used_suggestions_by_writer: extras.used_suggestions_by_writer || {},
-        qa_threads: (extras.qa_threads || []).map((m: any) => ({
+        qa_threads: (extras.qa_threads || []).map((m: any) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","callback_L1827_C51"), (({
           id: m.id,
           from_writer: m.from_writer,
           to_writer: m.to_writer,
@@ -1832,13 +1914,17 @@ if (action === "create") {
           ts: m.created_at ?? m.ts ?? 0,
           turn_number: m.turn_number ?? null,
           room: m.room ?? null,
-        })),
+        })))),
       };
       return res.json({ ok: true, extras: payload, success: true });
     }
 
     return res.status(400).json({ error: `unknown action: ${action}` });
   } catch (err) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/admin/rooms.ts","handler_L719_C1",true);
+
     return handleServerError(res, err);
   }
 }
+
+export default __fantasmiaWithTrace("api/admin/rooms.ts",handler);

@@ -1,3 +1,7 @@
+/** TRACE 2.4: import ESM espliciti per il runtime Node.js; logica operativa invariata. */
+/** FANTASMIA TRACE 5B-R2 / 2.1 — AI/api/openai/create-link-one-time.ts.
+ * Solo osservatori di ingresso/errori; argomenti e risultati originali conservati. */
+import {tracePoint as __fantasmiaTracePoint,withTrace as __fantasmiaWithTrace,withTraceRequest as __fantasmiaWithTraceRequest} from "../../lib/traceRuntime.js";
 /*
   ==================================================
   FantasMIA / Fantasmia - API CREATE LINK ONE-TIME NSU
@@ -112,10 +116,14 @@ const allowedOrigins: Array<string | RegExp> = [
 ];
 
 function isOriginAllowed(origin: string) {
-  return allowedOrigins.some((o) => (typeof o === "string" ? o === origin : o.test(origin)));
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","isOriginAllowed_L114_C1");
+
+  return allowedOrigins.some((o) => (/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","callback_L115_C30"), ((typeof o === "string" ? o === origin : o.test(origin)))));
 }
 
 function setCors(req: NextApiRequest, res: NextApiResponse) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","setCors_L118_C1");
+
   const origin = req.headers.origin || "";
   if (origin && isOriginAllowed(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
@@ -136,20 +144,28 @@ function setCors(req: NextApiRequest, res: NextApiResponse) {
 // Helpers base64url / HMAC
 // --------------------
 function b64urlToBuf(s: string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","b64urlToBuf_L138_C1");
+
   const b64 = s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4);
   return Buffer.from(b64, "base64");
 }
 
 function b64url(input: Buffer | string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","b64url_L143_C1");
+
   const b = Buffer.isBuffer(input) ? input : Buffer.from(input);
   return b.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
 function signHS256(data: string, secret: string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","signHS256_L148_C1");
+
   return b64url(crypto.createHmac("sha256", secret).update(data).digest());
 }
 
 function safeEqual(a: string, b: string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","safeEqual_L152_C1");
+
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
   if (ab.length !== bb.length) return false;
@@ -164,6 +180,8 @@ function safeEqual(a: string, b: string) {
 function verifySuBearer(
   req: NextApiRequest
 ): { ok: true; su_name: string } | { ok: false; error: string } {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","verifySuBearer_L164_C1");
+
   const secret = process.env.ADMIN_JWT_SECRET;
 
   if (!secret) {
@@ -196,6 +214,8 @@ function verifySuBearer(
   try {
     payload = JSON.parse(b64urlToBuf(pB64).toString("utf8"));
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","verifySuBearer_L164_C1",true);
+
     return { ok: false, error: "Invalid token payload" };
   }
 
@@ -234,21 +254,29 @@ function verifySuBearer(
 // One-time token helpers
 // --------------------
 function signOneTime(payloadJson: string, secret: string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","signOneTime_L236_C1");
+
   return b64url(crypto.createHmac("sha256", secret).update(payloadJson).digest());
 }
 
 function randomUsername() {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","randomUsername_L240_C1");
+
   const s = crypto.randomBytes(4).toString("hex").toUpperCase();
   return `NSU-${s}`;
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","normalizeOptionalString_L245_C1");
+
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiOk | ApiErr>) {
+  async function handler(req: NextApiRequest, res: NextApiResponse<ApiOk | ApiErr>) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","handler_L251_C1");
+
   const corsOk = setCors(req, res);
 
   if (req.method === "OPTIONS") {
@@ -263,6 +291,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   try {
     body = (typeof req.body === "string" ? JSON.parse(req.body) : (req.body ?? {})) as Body;
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/create-link-one-time.ts","handler_L251_C1",true);
+
     body = {};
   }
 
@@ -359,3 +389,5 @@ if (!suAuth.ok) {
     created_by: "SU",
   });
 }
+
+export default __fantasmiaWithTrace("api/openai/create-link-one-time.ts",handler);

@@ -1,3 +1,7 @@
+/** TRACE 2.4: import ESM espliciti per il runtime Node.js; logica operativa invariata. */
+/** FANTASMIA TRACE 5B-R2 / 2.1 — AI/api/openai/revoke-one-time-access.ts.
+ * Solo osservatori di ingresso/errori; argomenti e risultati originali conservati. */
+import {tracePoint as __fantasmiaTracePoint,withTrace as __fantasmiaWithTrace,withTraceRequest as __fantasmiaWithTraceRequest} from "../../lib/traceRuntime.js";
 /*
 ==================================================
 FantasMIA / Fantasmia - REVOKE ONE-TIME ACCESS
@@ -83,12 +87,16 @@ const allowedOrigins: Array<string | RegExp> = [
 ];
 
 function isOriginAllowed(origin: string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/revoke-one-time-access.ts","isOriginAllowed_L85_C1");
+
   return allowedOrigins.some((o) =>
-    typeof o === "string" ? o === origin : o.test(origin)
+    (/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/revoke-one-time-access.ts","callback_L86_C30"), (typeof o === "string" ? o === origin : o.test(origin)))
   );
 }
 
 function setCors(req: NextApiRequest, res: NextApiResponse) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/revoke-one-time-access.ts","setCors_L91_C1");
+
   const origin = req.headers.origin || "";
 
   if (origin && isOriginAllowed(origin)) {
@@ -109,6 +117,8 @@ function setCors(req: NextApiRequest, res: NextApiResponse) {
 }
 
 function b64urlToBuf(s: string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/revoke-one-time-access.ts","b64urlToBuf_L111_C1");
+
   const b64 =
     s.replace(/-/g, "+").replace(/_/g, "/") +
     "===".slice((s.length + 3) % 4);
@@ -117,6 +127,8 @@ function b64urlToBuf(s: string) {
 }
 
 function b64url(input: Buffer | string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/revoke-one-time-access.ts","b64url_L119_C1");
+
   const b = Buffer.isBuffer(input) ? input : Buffer.from(input);
 
   return b
@@ -127,6 +139,8 @@ function b64url(input: Buffer | string) {
 }
 
 function signHS256(data: string, secret: string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/revoke-one-time-access.ts","signHS256_L129_C1");
+
   return b64url(
     crypto
       .createHmac("sha256", secret)
@@ -136,6 +150,8 @@ function signHS256(data: string, secret: string) {
 }
 
 function safeEqual(a: string, b: string) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/revoke-one-time-access.ts","safeEqual_L138_C1");
+
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
 
@@ -147,6 +163,8 @@ function safeEqual(a: string, b: string) {
 function verifySuBearer(
   req: NextApiRequest
 ): { ok: true; su_name: string } | { ok: false; error: string } {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/revoke-one-time-access.ts","verifySuBearer_L147_C1");
+
   const secret = process.env.ADMIN_JWT_SECRET;
 
   if (!secret) {
@@ -192,6 +210,8 @@ function verifySuBearer(
       b64urlToBuf(pB64).toString("utf8")
     );
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/revoke-one-time-access.ts","verifySuBearer_L147_C1",true);
+
     return {
       ok: false,
       error: "Invalid token payload",
@@ -236,10 +256,12 @@ function verifySuBearer(
   };
 }
 
-export default async function handler(
+  async function handler(
   req: NextApiRequest,
   res: NextApiResponse<ApiOk | ApiErr>
 ) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/revoke-one-time-access.ts","handler_L239_C1");
+
   const corsOk = setCors(req, res);
 
   if (req.method === "OPTIONS") {
@@ -284,6 +306,8 @@ export default async function handler(
         ? JSON.parse(req.body)
         : req.body ?? {};
   } catch {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/revoke-one-time-access.ts","handler_L239_C1",true);
+
     body = {};
   }
 
@@ -335,3 +359,4 @@ export default async function handler(
     revoked: body.revoked,
   });
 }
+export default __fantasmiaWithTrace("api/openai/revoke-one-time-access.ts",handler);

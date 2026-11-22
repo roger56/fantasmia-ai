@@ -1,4 +1,8 @@
-import { NextResponse } from 'next/server';
+/** TRACE 2.4: import ESM espliciti per il runtime Node.js; logica operativa invariata. */
+/** FANTASMIA TRACE 5B-R2 / 2.1 — AI/api/openai/send_mail/route.ts.
+ * Solo osservatori di ingresso/errori; argomenti e risultati originali conservati. */
+import {tracePoint as __fantasmiaTracePoint,withTrace as __fantasmiaWithTrace,withTraceRequest as __fantasmiaWithTraceRequest} from "../../../lib/traceRuntime.js";
+import { NextResponse } from 'next/server.js';
 import nodemailer from 'nodemailer';
 
 interface EmailRequest {
@@ -7,7 +11,9 @@ interface EmailRequest {
   html: string;
 }
 
-export async function POST(request: Request) {
+ async function POST(request: Request) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/send_mail/route.ts","POST_L10_C1");
+
   try {
     const { to, subject, html } = await request.json() as EmailRequest;
 
@@ -29,6 +35,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+/* TRACE 2.1 */ __fantasmiaTracePoint("api/openai/send_mail/route.ts","POST_L10_C1",true);
+
     console.error('Email error:', error);
     return NextResponse.json(
       { error: 'Failed to send email' },
@@ -36,3 +44,6 @@ export async function POST(request: Request) {
     );
   }
 }
+
+const __fantasmiaPOST=__fantasmiaWithTraceRequest("api/openai/send_mail/route.ts",POST);
+export {__fantasmiaPOST as POST};
